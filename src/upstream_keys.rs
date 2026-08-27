@@ -12,6 +12,7 @@ pub fn router() -> Router<AppState> {
         .route("/upstream-keys", get(list).post(create))
         .route("/upstream-keys/{id}/disable", post(disable))
         .route("/upstream-keys/{id}/enable", post(enable))
+        .route("/upstream-keys/{id}/reveal", post(reveal))
         .route("/upstream-keys/{id}", axum::routing::delete(remove))
         .route("/alerts", get(alerts))
 }
@@ -162,6 +163,27 @@ async fn enable(
     // 只允许从「禁用」恢复；冷却/耗尽由状态机自己管理
     set_status(&state, id, false, "active").await?;
     Ok(StatusCode::OK)
+}
+
+/// 返回完整明文（密钥本就由用户自己添加，加密存储仅为落库安全）。
+async fn reveal(
+    State(state): State<AppState>,
+    _user: AuthUser,
+    Path(id): Path<i64>,
+) -> Result<Json<Value>, StatusCode> {
+    let ciphertext = sqlx::query_scalar::<_, String>(
+        "SELECT key_ciphertext FROM upstream_keys WHERE id = ?",
+    )
+    .bind(id)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+    .ok_or(StatusCode::NOT_FOUND)?;
+    let key = state
+        .crypto
+        .decrypt(&ciphertext)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(json!({ "key": key })))
 }
 
 async fn remove(

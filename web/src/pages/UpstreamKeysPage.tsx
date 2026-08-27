@@ -6,6 +6,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Layout } from '@/components/Layout'
+import { SecretCell } from '@/components/Secret'
 import { api } from '@/lib/api'
 import { STATUS_LABEL, STATUS_VARIANT, type UpstreamKey } from '@/lib/upstream-keys'
 
@@ -57,7 +58,7 @@ export default function UpstreamKeysPage() {
       <Card className="mb-6">
         <CardHeader>
           <CardTitle>添加上游密钥</CardTitle>
-          <CardDescription>Tavily 官方 API key（tvly-…），添加后参与负载均衡。密钥加密存储，此后只显示尾号。</CardDescription>
+          <CardDescription>Tavily 官方 API key（tvly-…），添加后参与负载均衡。密钥加密存储，可随时点眼睛查看明文或一键复制。</CardDescription>
         </CardHeader>
         <CardContent>
           <form onSubmit={add} className="grid gap-4 sm:grid-cols-[1fr_1fr_120px_auto] items-end">
@@ -98,7 +99,9 @@ export default function UpstreamKeysPage() {
               {keys.map((k) => (
                 <TableRow key={k.id}>
                   <TableCell>{k.nickname}</TableCell>
-                  <TableCell className="font-mono text-neutral-500">••••{k.key_tail}</TableCell>
+                  <TableCell>
+                    <SecretCell revealPath={`/api/upstream-keys/${k.id}/reveal`} masked={`tvly-••••${k.key_tail}`} />
+                  </TableCell>
                   <TableCell>
                     <Badge variant={STATUS_VARIANT[k.status]}>{STATUS_LABEL[k.status]}</Badge>
                   </TableCell>

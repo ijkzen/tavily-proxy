@@ -6,6 +6,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Layout } from '@/components/Layout'
+import { McpLinkLine, SecretLine, useSecret } from '@/components/Secret'
 import { api } from '@/lib/api'
 
 interface ProxyKey {
@@ -21,6 +22,32 @@ interface ProxyKey {
 function formatTime(unix: number | null) {
   if (!unix) return '从未使用'
   return new Date(unix * 1000).toLocaleString('zh-CN')
+}
+
+function ProxyKeyRow({ k, onRevoke }: { k: ProxyKey; onRevoke: (id: number) => void }) {
+  // 密钥展示与 MCP 链接共享同一份明文（一次 reveal 两个用途）
+  const secret = useSecret(`/api/proxy-keys/${k.id}/reveal`)
+  return (
+    <TableRow>
+      <TableCell>{k.name}</TableCell>
+      <TableCell className="max-w-72">
+        <div className="space-y-1">
+          <SecretLine secret={secret} masked={`tp-••••${k.key_tail}`} />
+          {!k.revoked && <McpLinkLine secret={secret} />}
+        </div>
+      </TableCell>
+      <TableCell>
+        {k.revoked ? <Badge variant="destructive">已吊销</Badge> : <Badge>有效</Badge>}
+      </TableCell>
+      <TableCell>{k.total_credits} credits</TableCell>
+      <TableCell className="text-neutral-500">{formatTime(k.last_used_at)}</TableCell>
+      <TableCell className="text-right">
+        {!k.revoked && (
+          <Button variant="destructive" size="sm" onClick={() => onRevoke(k.id)}>吊销</Button>
+        )}
+      </TableCell>
+    </TableRow>
+  )
 }
 
 export default function ProxyKeysPage() {
@@ -69,7 +96,8 @@ export default function ProxyKeysPage() {
         <CardHeader>
           <CardTitle>签发代理密钥</CardTitle>
           <CardDescription>
-            MCP 客户端用代理密钥连接本服务（Authorization: Bearer tp-… 或 ?key=tp-…）。完整值只在创建时展示一次。
+            MCP 客户端用代理密钥连接本服务（Authorization: Bearer tp-… 或 ?key=tp-…）。
+            密钥可随时在下方查看明文或复制 MCP 集成链接。
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -83,7 +111,7 @@ export default function ProxyKeysPage() {
           {error && <p className="text-sm text-red-600 mt-3">{error}</p>}
           {justCreated && (
             <div className="mt-4 rounded-md border border-amber-300 bg-amber-50 p-3">
-              <p className="text-sm font-medium text-amber-800 mb-1">请立即保存——它只显示这一次：</p>
+              <p className="text-sm font-medium text-amber-800 mb-1">新密钥（也可稍后在列表中随时查看）：</p>
               <code className="text-sm break-all select-all">{justCreated}</code>
             </div>
           )}
@@ -99,7 +127,7 @@ export default function ProxyKeysPage() {
             <TableHeader>
               <TableRow>
                 <TableHead>名称</TableHead>
-                <TableHead>密钥</TableHead>
+                <TableHead>密钥 / MCP 链接</TableHead>
                 <TableHead>状态</TableHead>
                 <TableHead>累计用量</TableHead>
                 <TableHead>最近使用</TableHead>
@@ -108,20 +136,7 @@ export default function ProxyKeysPage() {
             </TableHeader>
             <TableBody>
               {keys.map((k) => (
-                <TableRow key={k.id}>
-                  <TableCell>{k.name}</TableCell>
-                  <TableCell className="font-mono text-neutral-500">tp-••••{k.key_tail}</TableCell>
-                  <TableCell>
-                    {k.revoked ? <Badge variant="destructive">已吊销</Badge> : <Badge>有效</Badge>}
-                  </TableCell>
-                  <TableCell>{k.total_credits} credits</TableCell>
-                  <TableCell className="text-neutral-500">{formatTime(k.last_used_at)}</TableCell>
-                  <TableCell className="text-right">
-                    {!k.revoked && (
-                      <Button variant="destructive" size="sm" onClick={() => revoke(k.id)}>吊销</Button>
-                    )}
-                  </TableCell>
-                </TableRow>
+                <ProxyKeyRow key={k.id} k={k} onRevoke={revoke} />
               ))}
               {keys.length === 0 && (
                 <TableRow>

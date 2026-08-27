@@ -15,6 +15,7 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .route("/proxy-keys", get(list).post(create))
         .route("/proxy-keys/{id}/revoke", post(revoke))
+        .route("/proxy-keys/{id}/reveal", post(reveal))
 }
 
 type ProxyKeyRow = (i64, String, String, i64, i64, Option<i64>, i64);
@@ -65,13 +66,20 @@ async fn create(
     rand::rng().fill_bytes(&mut raw);
     let token = format!("tp-{}", hex::encode(raw));
     let tail = token[token.len() - 4..].to_owned();
+    // 双写：哈希用于验证，AES-GCM 密文用于事后明文可见/复制
+    let ciphertext = state
+        .crypto
+        .encrypt(&token)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let result = sqlx::query(
-        "INSERT INTO proxy_keys (name, key_hash, key_tail, created_at) VALUES (?, ?, ?, ?)",
+        "INSERT INTO proxy_keys (name, key_hash, key_tail, key_ciphertext, created_at) \
+         VALUES (?, ?, ?, ?, ?)",
     )
     .bind(name)
     .bind(sha256_hex(&token))
     .bind(&tail)
+    .bind(ciphertext)
     .bind(now())
     .execute(&state.db)
     .await
@@ -103,6 +111,32 @@ async fn revoke(
         return Err(StatusCode::NOT_FOUND);
     }
     Ok(StatusCode::OK)
+}
+
+/// 返回完整明文（双写改造前创建的旧 key 没有密文，返回 409）。
+async fn reveal(
+    State(state): State<AppState>,
+    _user: AuthUser,
+    Path(id): Path<i64>,
+) -> Result<Json<Value>, StatusCode> {
+    let row = sqlx::query_scalar::<_, Option<String>>(
+        "SELECT key_ciphertext FROM proxy_keys WHERE id = ?",
+    )
+    .bind(id)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let ciphertext = match row {
+        None => return Err(StatusCode::NOT_FOUND),
+        // 旧 key：无明文可示，需吊销重建
+        Some(None) => return Err(StatusCode::CONFLICT),
+        Some(Some(ct)) => ct,
+    };
+    let key = state
+        .crypto
+        .decrypt(&ciphertext)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(json!({ "key": key })))
 }
 
 /// 校验代理密钥（MCP 端点鉴权用）：有效则返回 id 并刷新最近使用时间。
