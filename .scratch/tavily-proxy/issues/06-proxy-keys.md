@@ -4,7 +4,7 @@
 
 **Blocked by:** 03 — 认证
 
-**Status:** claimed
+**Status:** resolved
 
 - [ ] 可生成多个代理密钥并命名，完整值仅创建时展示一次
 - [ ] 服务端只存哈希，数据库无明文

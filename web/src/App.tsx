@@ -6,6 +6,7 @@ import LoginPage from '@/pages/LoginPage'
 import DashboardPage from '@/pages/DashboardPage'
 import SettingsPage from '@/pages/SettingsPage'
 import UpstreamKeysPage from '@/pages/UpstreamKeysPage'
+import ProxyKeysPage from '@/pages/ProxyKeysPage'
 
 /** 登录门卫：无账号 → /setup；未登录 → /login；否则放行。 */
 function AuthGate({ children }: { children: React.ReactNode }) {
@@ -56,6 +57,7 @@ export default function App() {
       <Route path="/login" element={<LoggedOutOnly><LoginPage /></LoggedOutOnly>} />
       <Route path="/" element={<AuthGate><DashboardPage /></AuthGate>} />
       <Route path="/upstream-keys" element={<AuthGate><UpstreamKeysPage /></AuthGate>} />
+      <Route path="/proxy-keys" element={<AuthGate><ProxyKeysPage /></AuthGate>} />
       <Route path="/settings" element={<AuthGate><SettingsPage /></AuthGate>} />
     </Routes>
   )

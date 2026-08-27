@@ -94,7 +94,7 @@ fn verify_password(hash: &str, password: &str) -> bool {
         .unwrap_or(false)
 }
 
-fn sha256_hex(input: &str) -> String {
+pub fn sha256_hex(input: &str) -> String {
     hex::encode(Sha256::digest(input.as_bytes()))
 }
 

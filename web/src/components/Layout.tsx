@@ -20,6 +20,7 @@ export function Layout({ title, children }: { title: string; children?: React.Re
             <nav className="flex gap-4 text-sm text-neutral-600">
               <Link to="/" className="hover:text-neutral-900">看板</Link>
               <Link to="/upstream-keys" className="hover:text-neutral-900">上游密钥</Link>
+              <Link to="/proxy-keys" className="hover:text-neutral-900">代理密钥</Link>
               <Link to="/settings" className="hover:text-neutral-900">设置</Link>
             </nav>
           </div>
