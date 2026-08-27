@@ -12,7 +12,6 @@ interface ProxyKey {
   name: string
   total_credits: number
   last_used_at: number | null
-  revoked: boolean
 }
 
 interface Stats {
@@ -197,12 +196,7 @@ export default function DashboardPage() {
               <TableBody>
                 {proxyKeys.map((k) => (
                   <TableRow key={k.id}>
-                    <TableCell>
-                      {k.name}
-                      {k.revoked && (
-                        <Badge variant="outline" className="ml-2">已吊销</Badge>
-                      )}
-                    </TableCell>
+                    <TableCell>{k.name}</TableCell>
                     <TableCell>{k.total_credits}</TableCell>
                     <TableCell className="text-neutral-500">{fmtTime(k.last_used_at)}</TableCell>
                   </TableRow>

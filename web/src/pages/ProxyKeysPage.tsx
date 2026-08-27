@@ -1,5 +1,4 @@
 import { useEffect, useState } from 'react'
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -13,7 +12,6 @@ interface ProxyKey {
   id: number
   name: string
   key_tail: string
-  revoked: boolean
   total_credits: number
   last_used_at: number | null
   created_at: number
@@ -33,18 +31,13 @@ function ProxyKeyRow({ k, onRevoke }: { k: ProxyKey; onRevoke: (id: number) => v
       <TableCell className="min-w-72">
         <div className="space-y-0.5">
           <SecretLine secret={secret} masked={`tp-••••${k.key_tail}`} />
-          {!k.revoked && <McpLinkLine secret={secret} />}
+          <McpLinkLine secret={secret} />
         </div>
-      </TableCell>
-      <TableCell>
-        {k.revoked ? <Badge variant="destructive">已吊销</Badge> : <Badge>有效</Badge>}
       </TableCell>
       <TableCell>{k.total_credits} credits</TableCell>
       <TableCell className="text-neutral-500">{formatTime(k.last_used_at)}</TableCell>
       <TableCell className="text-right">
-        {!k.revoked && (
-          <Button variant="destructive" size="sm" onClick={() => onRevoke(k.id)}>吊销</Button>
-        )}
+        <Button variant="destructive" size="sm" onClick={() => onRevoke(k.id)}>删除</Button>
       </TableCell>
     </TableRow>
   )
@@ -128,7 +121,6 @@ export default function ProxyKeysPage() {
               <TableRow>
                 <TableHead>名称</TableHead>
                 <TableHead>密钥 / MCP 链接</TableHead>
-                <TableHead>状态</TableHead>
                 <TableHead>累计用量</TableHead>
                 <TableHead>最近使用</TableHead>
                 <TableHead className="text-right">操作</TableHead>
@@ -140,7 +132,7 @@ export default function ProxyKeysPage() {
               ))}
               {keys.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={6} className="text-center text-neutral-500 py-8">
+                  <TableCell colSpan={5} className="text-center text-neutral-500 py-8">
                     还没有代理密钥，签发一个给 MCP 客户端用
                   </TableCell>
                 </TableRow>

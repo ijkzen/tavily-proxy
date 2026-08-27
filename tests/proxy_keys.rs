@@ -44,16 +44,15 @@ async fn create_shows_full_key_once() {
     assert_eq!(keys.len(), 1);
     let tail = &full_key[full_key.len() - 4..];
     assert_eq!(keys[0]["key_tail"], tail);
-    assert_eq!(keys[0]["revoked"], false);
     assert!(
         !serde_json::to_string(&list).unwrap().contains(&full_key),
         "列表不得包含代理密钥明文"
     );
 }
 
-/// 吊销立即在列表中可见。（吊销后的 MCP 拒绝在票 07 的测试里覆盖）
+/// 吊销即删除：列表不再显示，reveal 404。
 #[tokio::test]
-async fn revoke_marks_key() {
+async fn revoke_deletes_key() {
     let app = common::spawn_app_no_upstream().await;
     common::setup_and_login(&app).await;
 
@@ -85,5 +84,22 @@ async fn revoke_marks_key() {
         .json()
         .await
         .unwrap();
-    assert_eq!(list[0]["revoked"], true);
+    assert_eq!(list.as_array().unwrap().len(), 0, "吊销后列表应为空");
+
+    let resp = app
+        .client
+        .post(format!("{}/api/proxy-keys/{id}/reveal", app.base_url))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND, "删除后 reveal 应 404");
+
+    // 重复吊销 → 404
+    let resp = app
+        .client
+        .post(format!("{}/api/proxy-keys/{id}/revoke", app.base_url))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 }

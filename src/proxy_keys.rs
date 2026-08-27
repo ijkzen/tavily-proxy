@@ -18,18 +18,17 @@ pub fn router() -> Router<AppState> {
         .route("/proxy-keys/{id}/reveal", post(reveal))
 }
 
-type ProxyKeyRow = (i64, String, String, i64, i64, Option<i64>, i64);
+type ProxyKeyRow = (i64, String, String, i64, Option<i64>, i64);
 
-const LIST_SQL: &str = "SELECT id, name, key_tail, revoked, total_credits, last_used_at, \
+const LIST_SQL: &str = "SELECT id, name, key_tail, total_credits, last_used_at, \
      created_at FROM proxy_keys ORDER BY id";
 
 fn to_json(row: ProxyKeyRow) -> Value {
-    let (id, name, tail, revoked, total_credits, last_used_at, created_at) = row;
+    let (id, name, tail, total_credits, last_used_at, created_at) = row;
     json!({
         "id": id,
         "name": name,
         "key_tail": tail,
-        "revoked": revoked != 0,
         "total_credits": total_credits,
         "last_used_at": last_used_at,
         "created_at": created_at,
@@ -86,7 +85,7 @@ async fn create(
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let mut view = to_json(
-        sqlx::query_as::<_, ProxyKeyRow>("SELECT id, name, key_tail, revoked, total_credits, last_used_at, created_at FROM proxy_keys WHERE id = ?")
+        sqlx::query_as::<_, ProxyKeyRow>("SELECT id, name, key_tail, total_credits, last_used_at, created_at FROM proxy_keys WHERE id = ?")
             .bind(result.last_insert_rowid())
             .fetch_one(&state.db)
             .await
@@ -102,7 +101,9 @@ async fn revoke(
     _user: AuthUser,
     Path(id): Path<i64>,
 ) -> Result<StatusCode, StatusCode> {
-    let result = sqlx::query("UPDATE proxy_keys SET revoked = 1 WHERE id = ?")
+    // 吊销即删除：代理密钥本就只服务我们自己签发的调用方，无审计必要；
+    // request_logs.proxy_key_id 变悬空引用，列表 JOIN 侧显示为「已删除密钥」。
+    let result = sqlx::query("DELETE FROM proxy_keys WHERE id = ?")
         .bind(id)
         .execute(&state.db)
         .await
@@ -141,9 +142,7 @@ async fn reveal(
 
 /// 校验代理密钥（MCP 端点鉴权用）：有效则返回 id 并刷新最近使用时间。
 pub async fn verify(db: &SqlitePool, token: &str) -> Option<i64> {
-    let id = sqlx::query_scalar::<_, i64>(
-        "SELECT id FROM proxy_keys WHERE key_hash = ? AND revoked = 0",
-    )
+    let id = sqlx::query_scalar::<_, i64>("SELECT id FROM proxy_keys WHERE key_hash = ?")
     .bind(sha256_hex(token))
     .fetch_optional(db)
     .await
