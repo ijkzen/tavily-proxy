@@ -7,31 +7,7 @@ import { Label } from '@/components/ui/label'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Layout } from '@/components/Layout'
 import { api } from '@/lib/api'
-
-interface UpstreamKey {
-  id: number
-  nickname: string
-  key_tail: string
-  status: 'active' | 'cooling' | 'exhausted' | 'disabled'
-  reset_day: number
-  usage: number
-  limit: number | null
-  created_at: number
-}
-
-const STATUS_LABEL: Record<UpstreamKey['status'], string> = {
-  active: '正常',
-  cooling: '冷却',
-  exhausted: '耗尽',
-  disabled: '禁用',
-}
-
-const STATUS_VARIANT: Record<UpstreamKey['status'], 'default' | 'secondary' | 'destructive' | 'outline'> = {
-  active: 'default',
-  cooling: 'secondary',
-  exhausted: 'destructive',
-  disabled: 'outline',
-}
+import { STATUS_LABEL, STATUS_VARIANT, type UpstreamKey } from '@/lib/upstream-keys'
 
 export default function UpstreamKeysPage() {
   const [keys, setKeys] = useState<UpstreamKey[]>([])

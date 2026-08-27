@@ -272,60 +272,36 @@ async fn call_research_tool(
     id: Value,
     arguments: Value,
 ) -> Response {
-    let started = Instant::now();
-    let params_summary = request_logs::summarize_params(&arguments);
-    let outcome = research::run(state, proxy_key_id, arguments).await;
-    let duration_ms = started.elapsed().as_millis() as i64;
-
-    let (upstream_key_id, success, error) = match &outcome {
-        research::ResearchOutcome::Completed { upstream_key_id, .. } => {
-            (Some(*upstream_key_id), true, None)
+    let log = ToolLog::start(proxy_key_id, "tavily_research", &arguments);
+    match research::run(state, proxy_key_id, arguments).await {
+        research::ResearchOutcome::Completed {
+            payload,
+            credits,
+            upstream_key_id,
+        } => {
+            log.finish(state, Some(upstream_key_id), credits, true, None).await;
+            tool_success(id, &payload)
         }
         research::ResearchOutcome::SubmitPassthrough {
             status,
             payload,
             upstream_key_id,
-        } => (
-            Some(*upstream_key_id),
-            false,
-            Some(format!("上游错误 {status}: {}", upstream_error_message(payload))),
-        ),
-        research::ResearchOutcome::Failed { message, upstream_key_id } => {
-            (*upstream_key_id, false, Some(message.clone()))
+        } => {
+            let msg = format!("上游错误 {status}: {}", upstream_error_message(&payload));
+            log.finish(state, Some(upstream_key_id), 0, false, Some(msg.clone())).await;
+            tool_error(id, msg)
         }
-        research::ResearchOutcome::AllUnavailable => (
-            None,
-            false,
-            Some("所有上游密钥暂不可用（限流/耗尽/已禁用）".to_owned()),
-        ),
-    };
-    let credits = match &outcome {
-        research::ResearchOutcome::Completed { credits, .. } => *credits,
-        _ => 0,
-    };
-    request_logs::record(
-        &state.db,
-        request_logs::NewLog {
-            proxy_key_id,
-            tool: "tavily_research".to_owned(),
-            params_summary,
+        research::ResearchOutcome::Failed {
+            message,
             upstream_key_id,
-            credits,
-            duration_ms,
-            success,
-            error,
-        },
-    )
-    .await;
-
-    match outcome {
-        research::ResearchOutcome::Completed { payload, .. } => tool_success(id, &payload),
-        research::ResearchOutcome::SubmitPassthrough { status, payload, .. } => {
-            tool_error(id, format!("上游错误 {status}: {}", upstream_error_message(&payload)))
+        } => {
+            log.finish(state, upstream_key_id, 0, false, Some(message.clone())).await;
+            tool_error(id, message)
         }
-        research::ResearchOutcome::Failed { message, .. } => tool_error(id, message),
         research::ResearchOutcome::AllUnavailable => {
-            tool_error(id, "所有上游密钥暂不可用（限流/耗尽/已禁用），请稍后重试或检查密钥池")
+            let msg = "所有上游密钥暂不可用（限流/耗尽/已禁用），请稍后重试或检查密钥池";
+            log.finish(state, None, 0, false, Some(msg.to_owned())).await;
+            tool_error(id, msg)
         }
     }
 }
@@ -339,62 +315,77 @@ async fn call_sync_tool(
     path: &str,
     arguments: Value,
 ) -> Response {
-    let started = Instant::now();
-    let params_summary = request_logs::summarize_params(&arguments);
+    let log = ToolLog::start(proxy_key_id, tool, &arguments);
     let mut body = arguments;
     body["include_usage"] = json!(true);
 
-    let outcome = balancer::execute(state, path, &body).await;
-    let duration_ms = started.elapsed().as_millis() as i64;
-    let (upstream_key_id, credits, success, error) = match &outcome {
+    match balancer::execute(state, path, &body).await {
         balancer::Outcome::Success {
+            payload,
             credits,
             upstream_key_id,
-            ..
-        } => (Some(*upstream_key_id), *credits, true, None),
+        } => {
+            log.finish(state, Some(upstream_key_id), credits, true, None).await;
+            record_proxy_usage(state, proxy_key_id, credits).await;
+            tool_success(id, &payload)
+        }
         balancer::Outcome::Passthrough {
             status,
             payload,
             upstream_key_id,
-        } => (
-            Some(*upstream_key_id),
-            0,
-            false,
-            Some(format!("上游错误 {status}: {}", upstream_error_message(payload))),
-        ),
-        balancer::Outcome::AllUnavailable => (
-            None,
-            0,
-            false,
-            Some("所有上游密钥暂不可用（限流/耗尽/已禁用）".to_owned()),
-        ),
-    };
-    request_logs::record(
-        &state.db,
-        request_logs::NewLog {
-            proxy_key_id,
-            tool: tool.to_owned(),
-            params_summary,
-            upstream_key_id,
-            credits,
-            duration_ms,
-            success,
-            error,
-        },
-    )
-    .await;
-
-    match outcome {
-        balancer::Outcome::Success { payload, credits, .. } => {
-            record_proxy_usage(state, proxy_key_id, credits).await;
-            tool_success(id, &payload)
-        }
-        balancer::Outcome::Passthrough { status, payload, .. } => {
-            tool_error(id, format!("上游错误 {status}: {}", upstream_error_message(&payload)))
+        } => {
+            let msg = format!("上游错误 {status}: {}", upstream_error_message(&payload));
+            log.finish(state, Some(upstream_key_id), 0, false, Some(msg.clone())).await;
+            tool_error(id, msg)
         }
         balancer::Outcome::AllUnavailable => {
-            tool_error(id, "所有上游密钥暂不可用（限流/耗尽/已禁用），请稍后重试或检查密钥池")
+            let msg = "所有上游密钥暂不可用（限流/耗尽/已禁用），请稍后重试或检查密钥池";
+            log.finish(state, None, 0, false, Some(msg.to_owned())).await;
+            tool_error(id, msg)
         }
+    }
+}
+
+/// 工具调用日志上下文：调用开始时 start，结束时 finish 落账（两个工具管道共用）。
+struct ToolLog {
+    proxy_key_id: i64,
+    tool: String,
+    params_summary: String,
+    started: Instant,
+}
+
+impl ToolLog {
+    fn start(proxy_key_id: i64, tool: &str, arguments: &Value) -> Self {
+        Self {
+            proxy_key_id,
+            tool: tool.to_owned(),
+            params_summary: request_logs::summarize_params(arguments),
+            started: Instant::now(),
+        }
+    }
+
+    async fn finish(
+        self,
+        state: &AppState,
+        upstream_key_id: Option<i64>,
+        credits: i64,
+        success: bool,
+        error: Option<String>,
+    ) {
+        request_logs::record(
+            &state.db,
+            request_logs::NewLog {
+                proxy_key_id: self.proxy_key_id,
+                tool: self.tool,
+                params_summary: self.params_summary,
+                upstream_key_id,
+                credits,
+                duration_ms: self.started.elapsed().as_millis() as i64,
+                success,
+                error,
+            },
+        )
+        .await;
     }
 }
 
@@ -406,12 +397,13 @@ pub(crate) async fn record_proxy_usage(state: &AppState, proxy_key_id: i64, cred
         .await;
 }
 
-/// 从 Tavily 错误体里提取可读信息：{"detail": {"error": "…"}} 或 {"detail": "…"}。
+/// 从上游错误体里提取可读信息：{"detail": {"error": "…"}} / {"detail": "…"} / {"error": "…"}。
 pub(crate) fn upstream_error_message(payload: &Value) -> String {
     payload
         .pointer("/detail/error")
         .and_then(Value::as_str)
         .or_else(|| payload["detail"].as_str())
+        .or_else(|| payload["error"].as_str())
         .map(str::to_owned)
         .unwrap_or_else(|| payload.to_string())
 }

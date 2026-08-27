@@ -5,14 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Layout } from '@/components/Layout'
 import { api } from '@/lib/api'
-
-interface UpstreamKey {
-  id: number
-  nickname: string
-  status: 'active' | 'cooling' | 'exhausted' | 'disabled'
-  usage: number
-  limit: number | null
-}
+import { STATUS_LABEL, STATUS_VARIANT, type UpstreamKey } from '@/lib/upstream-keys'
 
 interface ProxyKey {
   id: number
@@ -51,18 +44,12 @@ interface LogsResponse {
   items: LogEntry[]
 }
 
-const STATUS_LABEL: Record<UpstreamKey['status'], string> = {
-  active: '正常',
-  cooling: '冷却',
-  exhausted: '耗尽',
-  disabled: '禁用',
-}
-
-const STATUS_VARIANT: Record<UpstreamKey['status'], 'default' | 'secondary' | 'destructive' | 'outline'> = {
-  active: 'default',
-  cooling: 'secondary',
-  exhausted: 'destructive',
-  disabled: 'outline',
+interface Alert {
+  id: number
+  upstream_key_id: number | null
+  kind: string
+  message: string
+  created_at: number
 }
 
 const TOOLS = ['tavily_search', 'tavily_extract', 'tavily_crawl', 'tavily_map', 'tavily_research']
@@ -76,6 +63,7 @@ export default function DashboardPage() {
   const [upstreamKeys, setUpstreamKeys] = useState<UpstreamKey[]>([])
   const [proxyKeys, setProxyKeys] = useState<ProxyKey[]>([])
   const [stats, setStats] = useState<Stats | null>(null)
+  const [alerts, setAlerts] = useState<Alert[]>([])
   const [logs, setLogs] = useState<LogsResponse>({ total: 0, items: [] })
   const [filterProxyKey, setFilterProxyKey] = useState('')
   const [filterTool, setFilterTool] = useState('')
@@ -88,16 +76,18 @@ export default function DashboardPage() {
     if (filterSuccess) params.set('success', filterSuccess)
     const qs = params.size > 0 ? `?${params}` : ''
 
-    const [uk, pk, st, lg] = await Promise.all([
+    const [uk, pk, st, lg, al] = await Promise.all([
       api<UpstreamKey[]>('/api/upstream-keys'),
       api<ProxyKey[]>('/api/proxy-keys'),
       api<Stats>('/api/stats'),
       api<LogsResponse>(`/api/logs${qs}`),
+      api<Alert[]>('/api/alerts'),
     ])
     if (uk.ok && uk.data) setUpstreamKeys(uk.data)
     if (pk.ok && pk.data) setProxyKeys(pk.data)
     if (st.ok && st.data) setStats(st.data)
     if (lg.ok && lg.data) setLogs(lg.data)
+    if (al.ok && al.data) setAlerts(al.data)
   }, [filterProxyKey, filterTool, filterSuccess])
 
   useEffect(() => {
@@ -125,6 +115,29 @@ export default function DashboardPage() {
         <StatCard label="p95 延迟" value={stats ? `${stats.p95_duration_ms} ms` : '—'} />
         <StatCard label="总消耗 credits" value={stats?.total_credits ?? '—'} />
       </div>
+
+      {/* 告警：401 自动禁用、额度轮询失败等 */}
+      {alerts.length > 0 && (
+        <Card className="mb-6 border-amber-200 bg-amber-50">
+          <CardHeader>
+            <CardTitle className="text-amber-800">告警（{alerts.length}）</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            {alerts.slice(0, 5).map((a) => (
+              <div key={a.id} className="flex items-baseline gap-3 text-sm">
+                <span className="shrink-0 text-neutral-500">{fmtTime(a.created_at)}</span>
+                <span className="shrink-0 font-medium">
+                  {upstreamKeys.find((k) => k.id === a.upstream_key_id)?.nickname ?? '系统'}
+                </span>
+                <span className="text-neutral-700">{a.message}</span>
+              </div>
+            ))}
+            {alerts.length > 5 && (
+              <p className="text-sm text-neutral-500">… 其余 {alerts.length - 5} 条略</p>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       <div className="grid gap-4 lg:grid-cols-2 mb-6">
         {/* 上游密钥用量 */}

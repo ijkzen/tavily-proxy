@@ -11,9 +11,6 @@ use sqlx::SqlitePool;
 use crate::app::AppState;
 use crate::auth::{AuthUser, now};
 
-/// 日志保留 30 天
-const RETENTION_SECS: i64 = 30 * 24 * 3600;
-
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/logs", get(list_logs))
@@ -52,10 +49,10 @@ pub async fn record(db: &SqlitePool, log: NewLog) {
     .await;
 }
 
-/// 清理 30 天前的日志（额度轮询器每个周期顺带调用）。
-pub async fn cleanup_expired(db: &SqlitePool) {
+/// 清理超过保留期的日志（额度轮询器每个周期顺带调用）。
+pub async fn cleanup_expired(db: &SqlitePool, retention: std::time::Duration) {
     let _ = sqlx::query("DELETE FROM request_logs WHERE created_at < ?")
-        .bind(now() - RETENTION_SECS)
+        .bind(now() - retention.as_secs() as i64)
         .execute(db)
         .await;
 }
@@ -181,12 +178,12 @@ async fn list_logs(
     })))
 }
 
-/// 近 30 天的聚合：总量、成功数/率、平均与 p95 延迟、总 credits。
+/// 保留期窗口内（默认近 30 天）的聚合：总量、成功数/率、平均与 p95 延迟、总 credits。
 async fn stats(
     State(state): State<AppState>,
     _user: AuthUser,
 ) -> Result<Json<Value>, StatusCode> {
-    let cutoff = now() - RETENTION_SECS;
+    let cutoff = now() - state.log_retention.as_secs() as i64;
     let rows = sqlx::query_as::<_, (i64, i64)>(
         "SELECT success, duration_ms FROM request_logs WHERE created_at >= ?",
     )

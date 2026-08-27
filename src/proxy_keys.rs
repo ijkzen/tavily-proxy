@@ -105,8 +105,7 @@ async fn revoke(
     Ok(StatusCode::OK)
 }
 
-/// 校验代理密钥（MCP 端点鉴权用，票 07 接入）：有效则返回 id 并刷新最近使用时间。
-#[allow(dead_code)]
+/// 校验代理密钥（MCP 端点鉴权用）：有效则返回 id 并刷新最近使用时间。
 pub async fn verify(db: &SqlitePool, token: &str) -> Option<i64> {
     let id = sqlx::query_scalar::<_, i64>(
         "SELECT id FROM proxy_keys WHERE key_hash = ? AND revoked = 0",

@@ -7,7 +7,7 @@ use std::time::Duration;
 use crate::auth::LoginRateLimiter;
 use crate::crypto::Crypto;
 use crate::upstream::UpstreamClient;
-use crate::{assets, auth, mcp, proxy_keys, quota, request_logs, upstream_keys};
+use crate::{assets, auth, mcp, proxy_keys, quota, request_logs, research, upstream_keys};
 
 #[derive(Clone)]
 pub struct AppState {
@@ -19,10 +19,13 @@ pub struct AppState {
     pub cooldown: Duration,
     pub research_timeout: Duration,
     pub research_poll_interval: Duration,
+    pub log_retention: Duration,
 }
 
 pub fn build(state: AppState) -> Router {
     quota::spawn_poller(state.clone());
+    // 上一轮进程里还在轮询的 research 任务标记为中断（账本对齐现实）
+    tokio::spawn(research::mark_interrupted_on_boot(state.db.clone()));
     Router::new()
         .route("/healthz", get(healthz))
         .nest("/api", auth::router())

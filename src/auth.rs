@@ -107,7 +107,6 @@ fn session_cookie(token: String) -> Cookie<'static> {
 }
 
 /// 已登录用户。作为 handler 提取器使用，未登录一律 401。
-#[allow(dead_code)] // id 在后续票（用量归属）使用
 pub struct AuthUser {
     pub id: i64,
     pub username: String,

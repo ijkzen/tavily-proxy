@@ -92,6 +92,26 @@ pub async fn run(state: &AppState, proxy_key_id: i64, arguments: Value) -> Resea
     .await
 }
 
+/// 服务重启时调用：上一轮进程里还在轮询的任务随请求一起死了，标记为中断，
+/// 让 research_tasks 始终是反映当下的事实账本。
+pub async fn mark_interrupted_on_boot(db: sqlx::SqlitePool) {
+    let _ = sqlx::query(
+        "UPDATE research_tasks SET status = 'interrupted', finished_at = ? WHERE status = 'running'",
+    )
+    .bind(now())
+    .execute(&db)
+    .await;
+}
+
+async fn finish_task(db: &sqlx::SqlitePool, request_id: &str, status: &str) {
+    let _ = sqlx::query("UPDATE research_tasks SET status = ?, finished_at = ? WHERE request_id = ?")
+        .bind(status)
+        .bind(now())
+        .bind(request_id)
+        .execute(db)
+        .await;
+}
+
 async fn poll_until_done(
     state: &AppState,
     upstream_key_id: i64,
@@ -105,10 +125,10 @@ async fn poll_until_done(
         upstream_key_id: Some(upstream_key_id),
     };
     let deadline = Instant::now() + state.research_timeout;
-    loop {
+    let outcome = loop {
         tokio::time::sleep(state.research_poll_interval).await;
         if Instant::now() >= deadline {
-            return failed(format!(
+            break failed(format!(
                 "调研超时：{} 秒内未完成",
                 state.research_timeout.as_secs()
             ));
@@ -123,18 +143,15 @@ async fn poll_until_done(
                     let credits = payload["usage"]["credits"].as_i64().unwrap_or(0);
                     quota::record_usage(&state.db, upstream_key_id, credits).await;
                     mcp::record_proxy_usage(state, proxy_key_id, credits).await;
-                    return ResearchOutcome::Completed {
+                    break ResearchOutcome::Completed {
                         payload,
                         credits: submit_credits + credits,
                         upstream_key_id,
                     };
                 }
                 Some("failed") => {
-                    let reason = payload["error"]
-                        .as_str()
-                        .or_else(|| payload.pointer("/detail/error").and_then(Value::as_str))
-                        .unwrap_or("未知原因");
-                    return failed(format!("上游调研任务失败：{reason}"));
+                    let reason = mcp::upstream_error_message(&payload);
+                    break failed(format!("上游调研任务失败：{reason}"));
                 }
                 // 200 但仍在处理（pending 等中间态）→ 继续等
                 _ => continue,
@@ -142,10 +159,10 @@ async fn poll_until_done(
             // 202：仍在处理
             Ok((202, _)) => continue,
             Ok((404, _)) => {
-                return failed("上游找不到该调研任务（可能已过期）".into());
+                break failed("上游找不到该调研任务（可能已过期）".into());
             }
             Ok((status, payload)) => {
-                return failed(format!(
+                break failed(format!(
                     "轮询调研任务失败（上游 {status}）：{}",
                     mcp::upstream_error_message(&payload)
                 ));
@@ -153,7 +170,13 @@ async fn poll_until_done(
             // 网络抖动：不动状态，继续等到超时
             Err(_) => continue,
         }
-    }
+    };
+    let status = match &outcome {
+        ResearchOutcome::Completed { .. } => "completed",
+        _ => "failed",
+    };
+    finish_task(&state.db, request_id, status).await;
+    outcome
 }
 
 async fn upstream_api_key(state: &AppState, upstream_key_id: i64) -> Option<String> {

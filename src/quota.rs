@@ -7,13 +7,13 @@ use crate::auth::now;
 use crate::request_logs;
 
 /// 后台轮询任务：按 AppState.quota_poll_interval 周期刷新所有非禁用 key 的额度，
-/// 顺带清理过期请求日志（保留 30 天）。
+/// 顺带清理超过保留期的请求日志（默认 30 天，LOG_RETENTION_DAYS 可配）。
 pub fn spawn_poller(state: AppState) {
     tokio::spawn(async move {
         loop {
             tokio::time::sleep(state.quota_poll_interval).await;
             poll_once(&state).await;
-            request_logs::cleanup_expired(&state.db).await;
+            request_logs::cleanup_expired(&state.db, state.log_retention).await;
         }
     });
 }
@@ -62,8 +62,7 @@ async fn poll_once(state: &AppState) {
     }
 }
 
-/// 请求成功后本地扣减该 key 的已用量（票 07/08 在管道里调用）。
-#[allow(dead_code)]
+/// 请求成功后本地扣减该 key 的已用量（选路器/research 在管道里调用）。
 pub async fn record_usage(db: &SqlitePool, upstream_key_id: i64, credits: i64) {
     let _ = sqlx::query(
         "UPDATE upstream_keys SET usage_cached = usage_cached + ? WHERE id = ?",

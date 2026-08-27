@@ -7,6 +7,7 @@ pub struct Config {
     pub cooldown_secs: u64,
     pub research_timeout_secs: u64,
     pub research_poll_interval_ms: u64,
+    pub log_retention_days: u64,
 }
 
 impl Config {
@@ -36,6 +37,10 @@ impl Config {
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(2000),
+            log_retention_days: std::env::var("LOG_RETENTION_DAYS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(30),
         }
     }
 }

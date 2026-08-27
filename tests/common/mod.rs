@@ -78,6 +78,7 @@ pub struct Tuning {
     pub cooldown: Duration,
     pub research_poll: Duration,
     pub research_timeout: Duration,
+    pub log_retention: Duration,
 }
 
 impl Default for Tuning {
@@ -87,6 +88,7 @@ impl Default for Tuning {
             cooldown: Duration::from_secs(60),
             research_poll: Duration::from_millis(2000),
             research_timeout: Duration::from_secs(600),
+            log_retention: Duration::from_secs(30 * 24 * 3600),
         }
     }
 }
@@ -112,6 +114,7 @@ async fn spawn_app_with(tavily_base_url: String, tuning: Tuning) -> TestApp {
         cooldown: tuning.cooldown,
         research_timeout: tuning.research_timeout,
         research_poll_interval: tuning.research_poll,
+        log_retention: tuning.log_retention,
     };
     tokio::spawn(async move {
         axum::serve(listener, app::build(state)).await.unwrap();
@@ -204,7 +207,7 @@ pub async fn mcp_rpc(
         text.lines()
             .filter_map(|line| line.strip_prefix("data:"))
             .filter_map(|data| serde_json::from_str(data.trim()).ok())
-            .last()
+            .next_back()
     } else {
         serde_json::from_str(&text).ok()
     };
