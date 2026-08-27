@@ -4,7 +4,7 @@
 
 **Blocked by:** 04 — 上游密钥池管理
 
-**Status:** claimed
+**Status:** resolved
 
 - [ ] 周期轮询 GET /usage 并落库（usage/limit/账号维度），周期可配置
 - [ ] 有效剩余额度按账号粒度计算，同账号多 key 不重复计额度

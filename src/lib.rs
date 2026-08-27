@@ -4,4 +4,6 @@ pub mod auth;
 pub mod config;
 pub mod crypto;
 pub mod db;
+pub mod quota;
+pub mod upstream;
 pub mod upstream_keys;

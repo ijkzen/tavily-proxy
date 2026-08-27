@@ -3,6 +3,7 @@ pub struct Config {
     pub port: u16,
     pub database_url: String,
     pub tavily_base_url: String,
+    pub quota_poll_interval_secs: u64,
 }
 
 impl Config {
@@ -16,6 +17,10 @@ impl Config {
                 .unwrap_or_else(|_| "sqlite://data/tavily-proxy.db".into()),
             tavily_base_url: std::env::var("TAVILY_BASE_URL")
                 .unwrap_or_else(|_| "https://api.tavily.com".into()),
+            quota_poll_interval_secs: std::env::var("QUOTA_POLL_INTERVAL_SECS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(60),
         }
     }
 }

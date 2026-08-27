@@ -13,6 +13,34 @@ pub fn router() -> Router<AppState> {
         .route("/upstream-keys/{id}/disable", post(disable))
         .route("/upstream-keys/{id}/enable", post(enable))
         .route("/upstream-keys/{id}", axum::routing::delete(remove))
+        .route("/alerts", get(alerts))
+}
+
+/// 最近的告警（如额度轮询失败、key 失效），供看板展示。
+async fn alerts(
+    State(state): State<AppState>,
+    _user: AuthUser,
+) -> Result<Json<Value>, StatusCode> {
+    let rows = sqlx::query_as::<_, (i64, Option<i64>, String, String, i64)>(
+        "SELECT id, upstream_key_id, kind, message, created_at \
+         FROM alerts ORDER BY id DESC LIMIT 50",
+    )
+    .fetch_all(&state.db)
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(Value::Array(
+        rows.into_iter()
+            .map(|(id, key_id, kind, message, created_at)| {
+                json!({
+                    "id": id,
+                    "upstream_key_id": key_id,
+                    "kind": kind,
+                    "message": message,
+                    "created_at": created_at,
+                })
+            })
+            .collect(),
+    )))
 }
 
 /// 列表/详情里给前端的上游密钥视图——绝不含明文。
