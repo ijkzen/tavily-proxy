@@ -30,6 +30,7 @@ async fn main() -> anyhow::Result<()> {
         crypto,
         upstream: tavily_proxy::upstream::UpstreamClient::new(config.tavily_base_url.clone()),
         quota_poll_interval: std::time::Duration::from_secs(config.quota_poll_interval_secs),
+        cooldown: std::time::Duration::from_secs(config.cooldown_secs),
     };
 
     let listener = tokio::net::TcpListener::bind(("0.0.0.0", config.port)).await?;

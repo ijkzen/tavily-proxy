@@ -1,0 +1,225 @@
+mod common;
+
+use serde_json::json;
+use wiremock::matchers::{header, method, path};
+use wiremock::{Mock, MockServer, ResponseTemplate};
+
+const KEY_A: &str = "tvly-aaaaaaaaaaaaaaaaaaaa1111";
+const KEY_B: &str = "tvly-bbbbbbbbbbbbbbbbbbbb2222";
+
+/// 起一对 key 的测试环境：A 已用 800/1000，B 已用 100/1000（B 剩余更多）。
+/// 返回（app, upstream, 代理密钥 token）。
+async fn two_key_app(cooldown_secs: u64) -> (common::TestApp, MockServer, String) {
+    let upstream = MockServer::start().await;
+    for (key, used) in [(KEY_A, 800), (KEY_B, 100)] {
+        Mock::given(method("GET"))
+            .and(path("/usage"))
+            .and(header("authorization", format!("Bearer {key}")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "key": {"usage": used, "limit": null},
+                "account": {"plan_usage": used, "plan_limit": 1000}
+            })))
+            .mount(&upstream)
+            .await;
+    }
+
+    let app = common::spawn_app_tuned(upstream.uri(), 50, cooldown_secs).await;
+    common::setup_and_login(&app).await;
+    common::add_upstream_key(&app, KEY_A, "A").await;
+    common::add_upstream_key(&app, KEY_B, "B").await;
+    let token = common::create_proxy_key(&app, "客户端").await;
+
+    // 等两个 key 的额度都被轮询刷新
+    common::eventually(|| async {
+        let keys: serde_json::Value = app
+            .client
+            .get(format!("{}/api/upstream-keys", app.base_url))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        keys.as_array().unwrap().len() == 2 && keys.as_array().unwrap().iter().all(|k| k["usage_fetched_at"].is_i64())
+    })
+    .await;
+
+    (app, upstream, token)
+}
+
+/// 让 mock 上游对某个 key 的 /search 返回指定状态。
+async fn mock_search(upstream: &MockServer, key: &str, status: u16) {
+    Mock::given(method("POST"))
+        .and(path("/search"))
+        .and(header("authorization", format!("Bearer {key}")))
+        .respond_with(match status {
+            200 => ResponseTemplate::new(200).set_body_json(json!({
+                "query": "q", "results": [{"title": "ok", "url": "https://example.com", "content": "c", "score": 0.5}],
+                "response_time": 0.1, "usage": {"credits": 1}
+            })),
+            400 => ResponseTemplate::new(400).set_body_json(json!({"detail": {"error": "bad params"}})),
+            _ => ResponseTemplate::new(status),
+        })
+        .mount(upstream)
+        .await;
+}
+
+/// mock 上游实际收到的 /search 请求所用的 Bearer key 序列。
+async fn search_keys_used(upstream: &MockServer) -> Vec<String> {
+    upstream
+        .received_requests()
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|r| r.url.path() == "/search")
+        .map(|r| {
+            r.headers
+                .get("authorization")
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("")
+                .trim_start_matches("Bearer ")
+                .to_owned()
+        })
+        .collect()
+}
+
+async fn upstream_statuses(app: &common::TestApp) -> Vec<(String, String)> {
+    let keys: serde_json::Value = app
+        .client
+        .get(format!("{}/api/upstream-keys", app.base_url))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    keys.as_array()
+        .unwrap()
+        .iter()
+        .map(|k| (k["nickname"].as_str().unwrap().to_owned(), k["status"].as_str().unwrap().to_owned()))
+        .collect()
+}
+
+async fn call_search(app: &common::TestApp, token: &str) -> serde_json::Value {
+    common::mcp_call_tool(app, token, 10, "tavily_search", json!({"query": "q"}))
+        .await
+        .1
+}
+
+#[tokio::test]
+async fn picks_key_with_most_remaining_quota() {
+    let (app, upstream, token) = two_key_app(60).await;
+    mock_search(&upstream, KEY_B, 200).await;
+
+    let body = call_search(&app, &token).await;
+    assert_ne!(body["result"]["isError"], true);
+    assert_eq!(search_keys_used(&upstream).await, vec![KEY_B]);
+}
+
+#[tokio::test]
+async fn failover_on_429_cools_down_then_recovers() {
+    let (app, upstream, token) = two_key_app(1).await; // 冷却 1 秒
+    // wiremock 按挂载顺序匹配：先挂一次性 429，耗尽后落到后挂的 200
+    Mock::given(method("POST"))
+        .and(path("/search"))
+        .and(header("authorization", format!("Bearer {KEY_B}")))
+        .respond_with(ResponseTemplate::new(429))
+        .up_to_n_times(1)
+        .mount(&upstream)
+        .await;
+    mock_search(&upstream, KEY_B, 200).await;
+    mock_search(&upstream, KEY_A, 200).await;
+
+    // 第一次调用：B 限流 → 转移到 A 成功；B 进入冷却
+    let body = call_search(&app, &token).await;
+    assert_ne!(body["result"]["isError"], true);
+    assert_eq!(search_keys_used(&upstream).await, vec![KEY_B, KEY_A]);
+    common::eventually(|| async {
+        upstream_statuses(&app).await.contains(&("B".into(), "cooling".into()))
+    })
+    .await;
+
+    // 冷却到期后：下一次调用触发 sweep，B 恢复 active 并因剩余额度更多被重新选中
+    tokio::time::sleep(std::time::Duration::from_millis(1200)).await;
+    let body = call_search(&app, &token).await;
+    assert_ne!(body["result"]["isError"], true);
+    assert_eq!(search_keys_used(&upstream).await.last().unwrap(), KEY_B);
+    assert!(upstream_statuses(&app).await.contains(&("B".into(), "active".into())));
+}
+
+#[tokio::test]
+async fn exhausted_on_432_until_reset() {
+    let (app, upstream, token) = two_key_app(60).await;
+    mock_search(&upstream, KEY_B, 432).await;
+    mock_search(&upstream, KEY_A, 200).await;
+
+    let body = call_search(&app, &token).await;
+    assert_ne!(body["result"]["isError"], true);
+    assert_eq!(search_keys_used(&upstream).await, vec![KEY_B, KEY_A]);
+    assert!(upstream_statuses(&app).await.contains(&("B".into(), "exhausted".into())));
+
+    // 耗尽的 key 不再被选中
+    let body = call_search(&app, &token).await;
+    assert_ne!(body["result"]["isError"], true);
+    assert_eq!(search_keys_used(&upstream).await.last().unwrap(), KEY_A);
+}
+
+#[tokio::test]
+async fn disabled_on_401_with_alert() {
+    let (app, upstream, token) = two_key_app(60).await;
+    mock_search(&upstream, KEY_B, 401).await;
+    mock_search(&upstream, KEY_A, 200).await;
+
+    let body = call_search(&app, &token).await;
+    assert_ne!(body["result"]["isError"], true);
+    assert!(upstream_statuses(&app).await.contains(&("B".into(), "disabled".into())));
+
+    common::eventually(|| async {
+        let resp = app
+            .client
+            .get(format!("{}/api/alerts", app.base_url))
+            .send()
+            .await
+            .unwrap();
+        let alerts: serde_json::Value = resp.json().await.unwrap();
+        alerts.as_array().unwrap().iter().any(|a| a["kind"] == "key_invalid")
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn failover_on_500() {
+    let (app, upstream, token) = two_key_app(60).await;
+    mock_search(&upstream, KEY_B, 500).await;
+    mock_search(&upstream, KEY_A, 200).await;
+
+    let body = call_search(&app, &token).await;
+    assert_ne!(body["result"]["isError"], true);
+    assert_eq!(search_keys_used(&upstream).await, vec![KEY_B, KEY_A]);
+    // 5xx 是上游抖动，不改变 key 状态
+    assert!(upstream_statuses(&app).await.contains(&("B".into(), "active".into())));
+}
+
+#[tokio::test]
+async fn all_unavailable_returns_clear_error() {
+    let upstream = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/usage"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "key": {"usage": 0, "limit": null},
+            "account": {"plan_usage": 0, "plan_limit": 1000}
+        })))
+        .mount(&upstream)
+        .await;
+    mock_search(&upstream, KEY_A, 429).await;
+
+    let app = common::spawn_app_tuned(upstream.uri(), 50, 60).await;
+    common::setup_and_login(&app).await;
+    common::add_upstream_key(&app, KEY_A, "A").await;
+    let token = common::create_proxy_key(&app, "客户端").await;
+
+    let body = call_search(&app, &token).await;
+    assert_eq!(body["result"]["isError"], true);
+    let text = body["result"]["content"][0]["text"].as_str().unwrap();
+    assert!(text.contains("不可用"), "应返回明确的不可用错误: {text}");
+}

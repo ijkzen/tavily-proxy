@@ -17,16 +17,35 @@ pub struct TestApp {
 /// 启动真实 app（临时 SQLite、随机端口），上游 Tavily 指向传入的 base URL
 ///（测试里传 wiremock server 的地址）。
 pub async fn spawn_app(tavily_base_url: String) -> TestApp {
-    spawn_app_with(tavily_base_url, Duration::from_secs(60)).await
+    spawn_app_with(tavily_base_url, Duration::from_secs(60), 60).await
 }
 
 /// 额度轮询提速版本：把轮询周期压到毫秒级，供簿记测试驱动。
 #[allow(dead_code)]
 pub async fn spawn_app_fast_poll(tavily_base_url: String, interval_ms: u64) -> TestApp {
-    spawn_app_with(tavily_base_url, Duration::from_millis(interval_ms)).await
+    spawn_app_with(tavily_base_url, Duration::from_millis(interval_ms), 60).await
 }
 
-async fn spawn_app_with(tavily_base_url: String, quota_poll_interval: Duration) -> TestApp {
+/// 全参数版本：轮询周期与冷却时长都可调。
+#[allow(dead_code)]
+pub async fn spawn_app_tuned(
+    tavily_base_url: String,
+    poll_interval_ms: u64,
+    cooldown_secs: u64,
+) -> TestApp {
+    spawn_app_with(
+        tavily_base_url,
+        Duration::from_millis(poll_interval_ms),
+        cooldown_secs,
+    )
+    .await
+}
+
+async fn spawn_app_with(
+    tavily_base_url: String,
+    quota_poll_interval: Duration,
+    cooldown_secs: u64,
+) -> TestApp {
     let dir = tempfile::tempdir().expect("tempdir");
     let db_url = format!("sqlite://{}/test.db", dir.path().display());
     let pool = db::init(&db_url).await.expect("init db");
@@ -44,6 +63,7 @@ async fn spawn_app_with(tavily_base_url: String, quota_poll_interval: Duration) 
         login_limiter: Default::default(),
         upstream: UpstreamClient::new(tavily_base_url.clone()),
         quota_poll_interval,
+        cooldown: Duration::from_secs(cooldown_secs),
     };
     tokio::spawn(async move {
         axum::serve(listener, app::build(state)).await.unwrap();

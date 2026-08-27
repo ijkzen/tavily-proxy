@@ -180,30 +180,22 @@ async fn call_tool(
     }
 }
 
-/// 票 07：单 key 直转（额度感知选路与失败转移在票 08）。
+/// 经选路器+状态机执行 search（票 08）。
 async fn call_search(state: &AppState, proxy_key_id: i64, id: Value, arguments: Value) -> Response {
-    let Some((key_id, ciphertext)) = balancer::pick_any_active(&state.db).await else {
-        return tool_error(id, "没有可用的上游密钥，请先在管理界面添加");
-    };
-    let api_key = match state.crypto.decrypt(&ciphertext) {
-        Ok(k) => k,
-        Err(_) => return tool_error(id, "上游密钥解密失败"),
-    };
+    let mut body = arguments;
+    body["include_usage"] = json!(true);
 
-    let mut upstream_body = arguments;
-    upstream_body["include_usage"] = json!(true);
-
-    match state.upstream.post_json("/search", &api_key, &upstream_body).await {
-        Ok((200, payload)) => {
-            let credits = payload["usage"]["credits"].as_i64().unwrap_or(0);
-            quota::record_usage(&state.db, key_id, credits).await;
-            record_proxy_usage(&state, proxy_key_id, credits).await;
+    match balancer::execute(state, "/search", &body).await {
+        balancer::Outcome::Success { payload, credits } => {
+            record_proxy_usage(state, proxy_key_id, credits).await;
             tool_success(id, &payload)
         }
-        Ok((status, payload)) => {
+        balancer::Outcome::Passthrough { status, payload } => {
             tool_error(id, format!("上游错误 {status}: {}", upstream_error_message(&payload)))
         }
-        Err(err) => tool_error(id, format!("请求上游失败: {err:#}")),
+        balancer::Outcome::AllUnavailable => {
+            tool_error(id, "所有上游密钥暂不可用（限流/耗尽/已禁用），请稍后重试或检查密钥池")
+        }
     }
 }
 

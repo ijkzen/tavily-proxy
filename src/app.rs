@@ -16,6 +16,7 @@ pub struct AppState {
     pub crypto: Crypto,
     pub upstream: UpstreamClient,
     pub quota_poll_interval: Duration,
+    pub cooldown: Duration,
 }
 
 pub fn build(state: AppState) -> Router {
