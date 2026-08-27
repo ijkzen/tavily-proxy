@@ -25,6 +25,9 @@ pub async fn spawn_app(tavily_base_url: String) -> TestApp {
     let listener = tokio::net::TcpListener::from_std(listener).expect("to tokio listener");
 
     let state = AppState {
+        crypto: tavily_proxy::crypto::Crypto::load(&pool)
+            .await
+            .expect("crypto"),
         db: pool,
         login_limiter: Default::default(),
         tavily_base_url: tavily_base_url.clone(),

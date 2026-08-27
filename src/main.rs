@@ -23,9 +23,11 @@ async fn main() -> anyhow::Result<()> {
     }
 
     let pool = db::init(&config.database_url).await?;
+    let crypto = tavily_proxy::crypto::Crypto::load(&pool).await?;
     let state = AppState {
         db: pool,
         login_limiter: Default::default(),
+        crypto,
         tavily_base_url: config.tavily_base_url.clone(),
     };
 

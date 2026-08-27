@@ -4,7 +4,7 @@
 
 **Blocked by:** 03 — 认证
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [ ] 可添加上游密钥并加密存储，界面与接口永不回显明文（仅尾号）
 - [ ] 可手动禁用/启用单个密钥，禁用后不再进入可用池

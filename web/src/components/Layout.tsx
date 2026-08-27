@@ -19,6 +19,7 @@ export function Layout({ title, children }: { title: string; children?: React.Re
             <span className="font-semibold">tavily-proxy</span>
             <nav className="flex gap-4 text-sm text-neutral-600">
               <Link to="/" className="hover:text-neutral-900">看板</Link>
+              <Link to="/upstream-keys" className="hover:text-neutral-900">上游密钥</Link>
               <Link to="/settings" className="hover:text-neutral-900">设置</Link>
             </nav>
           </div>
