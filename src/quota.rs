@@ -27,7 +27,9 @@ async fn poll_once(state: &AppState) {
     let Ok(keys) = keys else { return };
 
     for (id, ciphertext) in keys {
-        let Ok(api_key) = state.crypto.decrypt(&ciphertext) else { continue };
+        let Ok(api_key) = state.crypto.decrypt(&ciphertext) else {
+            continue;
+        };
         match state.upstream.fetch_usage(&api_key).await {
             Ok(usage) => {
                 // 账号粒度建模（ADR-0002）：限额取 key.limit ?? account.plan_limit，
@@ -64,11 +66,9 @@ async fn poll_once(state: &AppState) {
 
 /// 请求成功后本地扣减该 key 的已用量（选路器/research 在管道里调用）。
 pub async fn record_usage(db: &SqlitePool, upstream_key_id: i64, credits: i64) {
-    let _ = sqlx::query(
-        "UPDATE upstream_keys SET usage_cached = usage_cached + ? WHERE id = ?",
-    )
-    .bind(credits)
-    .bind(upstream_key_id)
-    .execute(db)
-    .await;
+    let _ = sqlx::query("UPDATE upstream_keys SET usage_cached = usage_cached + ? WHERE id = ?")
+        .bind(credits)
+        .bind(upstream_key_id)
+        .execute(db)
+        .await;
 }

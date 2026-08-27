@@ -179,10 +179,7 @@ async fn list_logs(
 }
 
 /// 保留期窗口内（默认近 30 天）的聚合：总量、成功数/率、平均与 p95 延迟、总 credits。
-async fn stats(
-    State(state): State<AppState>,
-    _user: AuthUser,
-) -> Result<Json<Value>, StatusCode> {
+async fn stats(State(state): State<AppState>, _user: AuthUser) -> Result<Json<Value>, StatusCode> {
     let cutoff = now() - state.log_retention.as_secs() as i64;
     let rows = sqlx::query_as::<_, (i64, i64)>(
         "SELECT success, duration_ms FROM request_logs WHERE created_at >= ?",

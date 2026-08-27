@@ -95,8 +95,22 @@ async fn requests_are_logged_with_filters_and_stats() {
         keys.as_array().unwrap()[0]["id"].as_i64().unwrap()
     };
 
-    common::mcp_call_tool(&app, &token1, 1, "tavily_search", json!({"query": "第一个查询"})).await;
-    common::mcp_call_tool(&app, &token2, 2, "tavily_search", json!({"query": "第二个查询"})).await;
+    common::mcp_call_tool(
+        &app,
+        &token1,
+        1,
+        "tavily_search",
+        json!({"query": "第一个查询"}),
+    )
+    .await;
+    common::mcp_call_tool(
+        &app,
+        &token2,
+        2,
+        "tavily_search",
+        json!({"query": "第二个查询"}),
+    )
+    .await;
 
     // 全部日志：两条，含完整字段
     let logs = get_logs(&app, "").await;
@@ -112,7 +126,10 @@ async fn requests_are_logged_with_filters_and_stats() {
     assert_eq!(first["upstream_key_id"], key_b_id, "应记录实际所用上游密钥");
     assert!(first["proxy_key_id"].is_i64());
     assert!(
-        first["params_summary"].as_str().unwrap().contains("第二个查询"),
+        first["params_summary"]
+            .as_str()
+            .unwrap()
+            .contains("第二个查询"),
         "应记录参数摘要: {first}"
     );
     assert!(first["error"].is_null());
@@ -182,7 +199,10 @@ async fn failed_requests_are_logged_and_counted() {
     let entry = &logs["items"][0];
     assert_eq!(entry["success"], false);
     assert_eq!(entry["credits"], 0);
-    assert_eq!(entry["upstream_key_id"], key_b_id, "透传失败也应记下当时所用 key");
+    assert_eq!(
+        entry["upstream_key_id"], key_b_id,
+        "透传失败也应记下当时所用 key"
+    );
     let error = entry["error"].as_str().unwrap();
     assert!(error.contains("400"), "错误信息应含上游状态码: {error}");
 

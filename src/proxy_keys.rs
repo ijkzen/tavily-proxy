@@ -35,10 +35,7 @@ fn to_json(row: ProxyKeyRow) -> Value {
     })
 }
 
-async fn list(
-    State(state): State<AppState>,
-    _user: AuthUser,
-) -> Result<Json<Value>, StatusCode> {
+async fn list(State(state): State<AppState>, _user: AuthUser) -> Result<Json<Value>, StatusCode> {
     let rows = sqlx::query_as::<_, ProxyKeyRow>(LIST_SQL)
         .fetch_all(&state.db)
         .await
@@ -143,10 +140,10 @@ async fn reveal(
 /// 校验代理密钥（MCP 端点鉴权用）：有效则返回 id 并刷新最近使用时间。
 pub async fn verify(db: &SqlitePool, token: &str) -> Option<i64> {
     let id = sqlx::query_scalar::<_, i64>("SELECT id FROM proxy_keys WHERE key_hash = ?")
-    .bind(sha256_hex(token))
-    .fetch_optional(db)
-    .await
-    .ok()??;
+        .bind(sha256_hex(token))
+        .fetch_optional(db)
+        .await
+        .ok()??;
     let _ = sqlx::query("UPDATE proxy_keys SET last_used_at = ? WHERE id = ?")
         .bind(now())
         .bind(id)

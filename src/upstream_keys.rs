@@ -18,10 +18,7 @@ pub fn router() -> Router<AppState> {
 }
 
 /// 最近的告警（如额度轮询失败、key 失效），供看板展示。
-async fn alerts(
-    State(state): State<AppState>,
-    _user: AuthUser,
-) -> Result<Json<Value>, StatusCode> {
+async fn alerts(State(state): State<AppState>, _user: AuthUser) -> Result<Json<Value>, StatusCode> {
     let rows = sqlx::query_as::<_, (i64, Option<i64>, String, String, i64)>(
         "SELECT id, upstream_key_id, kind, message, created_at \
          FROM alerts ORDER BY id DESC LIMIT 50",
@@ -45,7 +42,17 @@ async fn alerts(
 }
 
 /// 列表/详情里给前端的上游密钥视图——绝不含明文。
-type KeyRow = (i64, String, String, String, i64, i64, Option<i64>, Option<i64>, i64);
+type KeyRow = (
+    i64,
+    String,
+    String,
+    String,
+    i64,
+    i64,
+    Option<i64>,
+    Option<i64>,
+    i64,
+);
 
 fn to_json(row: KeyRow) -> Value {
     let (id, nickname, tail, status, reset_day, usage, limit, fetched_at, created_at) = row;
@@ -65,10 +72,7 @@ fn to_json(row: KeyRow) -> Value {
 const LIST_SQL: &str = "SELECT id, nickname, key_tail, status, reset_day, usage_cached, \
      limit_cached, usage_fetched_at, created_at FROM upstream_keys ORDER BY id";
 
-async fn list(
-    State(state): State<AppState>,
-    _user: AuthUser,
-) -> Result<Json<Value>, StatusCode> {
+async fn list(State(state): State<AppState>, _user: AuthUser) -> Result<Json<Value>, StatusCode> {
     let rows = sqlx::query_as::<_, KeyRow>(LIST_SQL)
         .fetch_all(&state.db)
         .await
@@ -98,7 +102,14 @@ async fn create(
         .crypto
         .encrypt(key)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let tail: String = key.chars().rev().take(4).collect::<String>().chars().rev().collect();
+    let tail: String = key
+        .chars()
+        .rev()
+        .take(4)
+        .collect::<String>()
+        .chars()
+        .rev()
+        .collect();
 
     let result = sqlx::query(
         "INSERT INTO upstream_keys (nickname, key_ciphertext, key_tail, reset_day, created_at) \
@@ -171,14 +182,13 @@ async fn reveal(
     _user: AuthUser,
     Path(id): Path<i64>,
 ) -> Result<Json<Value>, StatusCode> {
-    let ciphertext = sqlx::query_scalar::<_, String>(
-        "SELECT key_ciphertext FROM upstream_keys WHERE id = ?",
-    )
-    .bind(id)
-    .fetch_optional(&state.db)
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-    .ok_or(StatusCode::NOT_FOUND)?;
+    let ciphertext =
+        sqlx::query_scalar::<_, String>("SELECT key_ciphertext FROM upstream_keys WHERE id = ?")
+            .bind(id)
+            .fetch_optional(&state.db)
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+            .ok_or(StatusCode::NOT_FOUND)?;
     let key = state
         .crypto
         .decrypt(&ciphertext)

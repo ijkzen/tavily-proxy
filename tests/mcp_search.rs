@@ -25,7 +25,10 @@ async fn mcp_requires_valid_proxy_key() {
     // 真 key 可用
     let (status, body) = common::mcp_initialize(&app, Some(&token)).await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(body.unwrap()["result"]["serverInfo"]["name"], "tavily-proxy");
+    assert_eq!(
+        body.unwrap()["result"]["serverInfo"]["name"],
+        "tavily-proxy"
+    );
 
     // 吊销后拒绝
     let list: serde_json::Value = app
@@ -96,7 +99,10 @@ async fn search_passthrough_end_to_end() {
     let result = &body["result"];
     assert_ne!(result["isError"], true);
     let text = result["content"][0]["text"].as_str().unwrap();
-    assert!(text.contains("Async Rust Book"), "结果应含上游返回的内容: {text}");
+    assert!(
+        text.contains("Async Rust Book"),
+        "结果应含上游返回的内容: {text}"
+    );
 
     // credits 记账：上游 key 和代理 key 各记 2
     let keys: serde_json::Value = app
@@ -138,11 +144,15 @@ async fn upstream_400_is_passed_through_as_tool_error() {
     common::add_upstream_key(&app, KEY_A, "主力").await;
     let token = common::create_proxy_key(&app, "客户端").await;
 
-    let (_, body) = common::mcp_call_tool(&app, &token, 3, "tavily_search", json!({"query": "x"})).await;
+    let (_, body) =
+        common::mcp_call_tool(&app, &token, 3, "tavily_search", json!({"query": "x"})).await;
     let result = &body["result"];
     assert_eq!(result["isError"], true);
     let text = result["content"][0]["text"].as_str().unwrap();
-    assert!(text.contains("Your request is invalid."), "应透传上游错误信息: {text}");
+    assert!(
+        text.contains("Your request is invalid."),
+        "应透传上游错误信息: {text}"
+    );
 }
 
 /// ?key= query 参数传代理密钥（供不能自定义 header 的客户端）。

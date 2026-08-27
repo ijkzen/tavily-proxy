@@ -40,7 +40,12 @@ async fn two_key_app(cooldown_secs: u64) -> (common::TestApp, MockServer, String
             .json()
             .await
             .unwrap();
-        keys.as_array().unwrap().len() == 2 && keys.as_array().unwrap().iter().all(|k| k["usage_fetched_at"].is_i64())
+        keys.as_array().unwrap().len() == 2
+            && keys
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|k| k["usage_fetched_at"].is_i64())
     })
     .await;
 
@@ -96,7 +101,12 @@ async fn upstream_statuses(app: &common::TestApp) -> Vec<(String, String)> {
     keys.as_array()
         .unwrap()
         .iter()
-        .map(|k| (k["nickname"].as_str().unwrap().to_owned(), k["status"].as_str().unwrap().to_owned()))
+        .map(|k| {
+            (
+                k["nickname"].as_str().unwrap().to_owned(),
+                k["status"].as_str().unwrap().to_owned(),
+            )
+        })
         .collect()
 }
 
@@ -135,7 +145,9 @@ async fn failover_on_429_cools_down_then_recovers() {
     assert_ne!(body["result"]["isError"], true);
     assert_eq!(search_keys_used(&upstream).await, vec![KEY_B, KEY_A]);
     common::eventually(|| async {
-        upstream_statuses(&app).await.contains(&("B".into(), "cooling".into()))
+        upstream_statuses(&app)
+            .await
+            .contains(&("B".into(), "cooling".into()))
     })
     .await;
 
@@ -144,7 +156,11 @@ async fn failover_on_429_cools_down_then_recovers() {
     let body = call_search(&app, &token).await;
     assert_ne!(body["result"]["isError"], true);
     assert_eq!(search_keys_used(&upstream).await.last().unwrap(), KEY_B);
-    assert!(upstream_statuses(&app).await.contains(&("B".into(), "active".into())));
+    assert!(
+        upstream_statuses(&app)
+            .await
+            .contains(&("B".into(), "active".into()))
+    );
 }
 
 #[tokio::test]
@@ -156,7 +172,11 @@ async fn exhausted_on_432_until_reset() {
     let body = call_search(&app, &token).await;
     assert_ne!(body["result"]["isError"], true);
     assert_eq!(search_keys_used(&upstream).await, vec![KEY_B, KEY_A]);
-    assert!(upstream_statuses(&app).await.contains(&("B".into(), "exhausted".into())));
+    assert!(
+        upstream_statuses(&app)
+            .await
+            .contains(&("B".into(), "exhausted".into()))
+    );
 
     // 耗尽的 key 不再被选中
     let body = call_search(&app, &token).await;
@@ -172,7 +192,11 @@ async fn disabled_on_401_with_alert() {
 
     let body = call_search(&app, &token).await;
     assert_ne!(body["result"]["isError"], true);
-    assert!(upstream_statuses(&app).await.contains(&("B".into(), "disabled".into())));
+    assert!(
+        upstream_statuses(&app)
+            .await
+            .contains(&("B".into(), "disabled".into()))
+    );
 
     common::eventually(|| async {
         let resp = app
@@ -182,7 +206,11 @@ async fn disabled_on_401_with_alert() {
             .await
             .unwrap();
         let alerts: serde_json::Value = resp.json().await.unwrap();
-        alerts.as_array().unwrap().iter().any(|a| a["kind"] == "key_invalid")
+        alerts
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|a| a["kind"] == "key_invalid")
     })
     .await;
 }
@@ -197,7 +225,11 @@ async fn failover_on_500() {
     assert_ne!(body["result"]["isError"], true);
     assert_eq!(search_keys_used(&upstream).await, vec![KEY_B, KEY_A]);
     // 5xx 是上游抖动，不改变 key 状态
-    assert!(upstream_statuses(&app).await.contains(&("B".into(), "active".into())));
+    assert!(
+        upstream_statuses(&app)
+            .await
+            .contains(&("B".into(), "active".into()))
+    );
 }
 
 #[tokio::test]

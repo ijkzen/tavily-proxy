@@ -17,7 +17,11 @@ use crate::auth::now;
 use crate::quota;
 
 pub enum Outcome {
-    Success { payload: Value, credits: i64, upstream_key_id: i64 },
+    Success {
+        payload: Value,
+        credits: i64,
+        upstream_key_id: i64,
+    },
     /// 上游 4xx（调用方问题），原样带状态码与响应体透传
     Passthrough {
         status: u16,
@@ -124,23 +128,23 @@ async fn sweep_expired(db: &SqlitePool) {
 
 async fn mark_cooling(state: &AppState, key_id: i64) {
     let until = now() + state.cooldown.as_secs() as i64;
-    let _ = sqlx::query(
-        "UPDATE upstream_keys SET status = 'cooling', cooling_until = ? WHERE id = ?",
-    )
-    .bind(until)
-    .bind(key_id)
-    .execute(&state.db)
-    .await;
+    let _ =
+        sqlx::query("UPDATE upstream_keys SET status = 'cooling', cooling_until = ? WHERE id = ?")
+            .bind(until)
+            .bind(key_id)
+            .execute(&state.db)
+            .await;
 }
 
 async fn mark_exhausted(state: &AppState, key_id: i64) {
-    let reset_day = sqlx::query_scalar::<_, i64>("SELECT reset_day FROM upstream_keys WHERE id = ?")
-        .bind(key_id)
-        .fetch_optional(&state.db)
-        .await
-        .ok()
-        .flatten()
-        .unwrap_or(1);
+    let reset_day =
+        sqlx::query_scalar::<_, i64>("SELECT reset_day FROM upstream_keys WHERE id = ?")
+            .bind(key_id)
+            .fetch_optional(&state.db)
+            .await
+            .ok()
+            .flatten()
+            .unwrap_or(1);
     let until = next_reset(now(), reset_day);
     let _ = sqlx::query(
         "UPDATE upstream_keys SET status = 'exhausted', exhausted_until = ? WHERE id = ?",

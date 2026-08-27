@@ -74,7 +74,11 @@ async fn poll_failure_creates_alert() {
             .await
             .unwrap();
         let alerts = resp.json::<serde_json::Value>().await.unwrap();
-        alerts.as_array().unwrap().iter().any(|a| a["kind"] == "quota_poll_failed")
+        alerts
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|a| a["kind"] == "quota_poll_failed")
     })
     .await;
 }

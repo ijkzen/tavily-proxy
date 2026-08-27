@@ -1,5 +1,5 @@
-use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
 use argon2::Argon2;
+use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
 use axum::extract::{FromRequestParts, State};
 use axum::http::StatusCode;
 use axum::http::request::Parts;
@@ -35,7 +35,10 @@ impl LoginRateLimiter {
 
     pub fn record_failure(&mut self, username: &str) {
         self.prune(username);
-        self.failures.entry(username.to_owned()).or_default().push_back(now());
+        self.failures
+            .entry(username.to_owned())
+            .or_default()
+            .push_back(now());
     }
 
     pub fn record_success(&mut self, username: &str) {
@@ -77,11 +80,9 @@ fn random_bytes<const N: usize>() -> [u8; N] {
 
 fn hash_password(password: &str) -> Result<String, argon2::password_hash::Error> {
     let salt = SaltString::encode_b64(&random_bytes::<16>())?;
-    Ok(
-        Argon2::default()
-            .hash_password(password.as_bytes(), &salt)?
-            .to_string(),
-    )
+    Ok(Argon2::default()
+        .hash_password(password.as_bytes(), &salt)?
+        .to_string())
 }
 
 fn verify_password(hash: &str, password: &str) -> bool {
@@ -208,13 +209,20 @@ async fn login(
     .fetch_optional(&state.db)
     .await
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let verified = row
-        .filter(|(_, hash)| verify_password(hash, &body.password));
+    let verified = row.filter(|(_, hash)| verify_password(hash, &body.password));
     let Some((user_id, _)) = verified else {
-        state.login_limiter.lock().unwrap().record_failure(&username);
+        state
+            .login_limiter
+            .lock()
+            .unwrap()
+            .record_failure(&username);
         return Err(StatusCode::UNAUTHORIZED);
     };
-    state.login_limiter.lock().unwrap().record_success(&username);
+    state
+        .login_limiter
+        .lock()
+        .unwrap()
+        .record_success(&username);
 
     let token = hex::encode(random_bytes::<32>());
     sqlx::query("INSERT INTO sessions (token_hash, user_id, expires_at) VALUES (?, ?, ?)")

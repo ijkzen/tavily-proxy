@@ -17,7 +17,10 @@ use crate::{balancer, proxy_keys, request_logs, research};
 
 pub fn router(state: AppState) -> Router<AppState> {
     Router::new()
-        .route("/mcp", post(handle_post).get(handle_get).delete(handle_delete))
+        .route(
+            "/mcp",
+            post(handle_post).get(handle_get).delete(handle_delete),
+        )
         .route_layer(middleware::from_fn_with_state(state, auth_middleware))
 }
 
@@ -100,7 +103,8 @@ async fn handle_post(
         "tools/call" => {
             let name = body["params"]["name"].as_str().unwrap_or("").to_owned();
             let arguments = body["params"]["arguments"].clone();
-            call_tool(&state, proxy_key_id, id, &name, arguments).await        }
+            call_tool(&state, proxy_key_id, id, &name, arguments).await
+        }
         _ => (
             StatusCode::OK,
             Json(json!({
@@ -142,8 +146,10 @@ fn tool_error(id: Value, message: impl Into<String>) -> Response {
 fn tools() -> Vec<Value> {
     let bool_default_false = json!({"type": "boolean", "default": false});
     let string_array = json!({"type": "array", "items": {"type": "string"}});
-    let extract_depth = json!({"type": "string", "enum": ["basic", "advanced"], "default": "basic"});
-    let format_enum = json!({"type": "string", "enum": ["markdown", "text"], "default": "markdown"});
+    let extract_depth =
+        json!({"type": "string", "enum": ["basic", "advanced"], "default": "basic"});
+    let format_enum =
+        json!({"type": "string", "enum": ["markdown", "text"], "default": "markdown"});
 
     vec![
         json!({
@@ -279,7 +285,8 @@ async fn call_research_tool(
             credits,
             upstream_key_id,
         } => {
-            log.finish(state, Some(upstream_key_id), credits, true, None).await;
+            log.finish(state, Some(upstream_key_id), credits, true, None)
+                .await;
             tool_success(id, &payload)
         }
         research::ResearchOutcome::SubmitPassthrough {
@@ -288,19 +295,22 @@ async fn call_research_tool(
             upstream_key_id,
         } => {
             let msg = format!("上游错误 {status}: {}", upstream_error_message(&payload));
-            log.finish(state, Some(upstream_key_id), 0, false, Some(msg.clone())).await;
+            log.finish(state, Some(upstream_key_id), 0, false, Some(msg.clone()))
+                .await;
             tool_error(id, msg)
         }
         research::ResearchOutcome::Failed {
             message,
             upstream_key_id,
         } => {
-            log.finish(state, upstream_key_id, 0, false, Some(message.clone())).await;
+            log.finish(state, upstream_key_id, 0, false, Some(message.clone()))
+                .await;
             tool_error(id, message)
         }
         research::ResearchOutcome::AllUnavailable => {
             let msg = "所有上游密钥暂不可用（限流/耗尽/已禁用），请稍后重试或检查密钥池";
-            log.finish(state, None, 0, false, Some(msg.to_owned())).await;
+            log.finish(state, None, 0, false, Some(msg.to_owned()))
+                .await;
             tool_error(id, msg)
         }
     }
@@ -325,7 +335,8 @@ async fn call_sync_tool(
             credits,
             upstream_key_id,
         } => {
-            log.finish(state, Some(upstream_key_id), credits, true, None).await;
+            log.finish(state, Some(upstream_key_id), credits, true, None)
+                .await;
             record_proxy_usage(state, proxy_key_id, credits).await;
             tool_success(id, &payload)
         }
@@ -335,12 +346,14 @@ async fn call_sync_tool(
             upstream_key_id,
         } => {
             let msg = format!("上游错误 {status}: {}", upstream_error_message(&payload));
-            log.finish(state, Some(upstream_key_id), 0, false, Some(msg.clone())).await;
+            log.finish(state, Some(upstream_key_id), 0, false, Some(msg.clone()))
+                .await;
             tool_error(id, msg)
         }
         balancer::Outcome::AllUnavailable => {
             let msg = "所有上游密钥暂不可用（限流/耗尽/已禁用），请稍后重试或检查密钥池";
-            log.finish(state, None, 0, false, Some(msg.to_owned())).await;
+            log.finish(state, None, 0, false, Some(msg.to_owned()))
+                .await;
             tool_error(id, msg)
         }
     }

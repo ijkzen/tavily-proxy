@@ -104,12 +104,13 @@ pub async fn mark_interrupted_on_boot(db: sqlx::SqlitePool) {
 }
 
 async fn finish_task(db: &sqlx::SqlitePool, request_id: &str, status: &str) {
-    let _ = sqlx::query("UPDATE research_tasks SET status = ?, finished_at = ? WHERE request_id = ?")
-        .bind(status)
-        .bind(now())
-        .bind(request_id)
-        .execute(db)
-        .await;
+    let _ =
+        sqlx::query("UPDATE research_tasks SET status = ?, finished_at = ? WHERE request_id = ?")
+            .bind(status)
+            .bind(now())
+            .bind(request_id)
+            .execute(db)
+            .await;
 }
 
 async fn poll_until_done(

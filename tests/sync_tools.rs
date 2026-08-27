@@ -13,7 +13,9 @@ async fn extract_crawl_map_passthrough() {
     let upstream = MockServer::start().await;
     Mock::given(method("POST"))
         .and(path("/extract"))
-        .and(body_json(json!({"urls": ["https://example.com"], "include_usage": true})))
+        .and(body_json(
+            json!({"urls": ["https://example.com"], "include_usage": true}),
+        ))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "results": [{"url": "https://example.com", "raw_content": "extracted"}],
             "failed_results": [], "response_time": 0.2, "usage": {"credits": 1}
@@ -22,7 +24,9 @@ async fn extract_crawl_map_passthrough() {
         .await;
     Mock::given(method("POST"))
         .and(path("/crawl"))
-        .and(body_json(json!({"url": "https://example.com", "include_usage": true})))
+        .and(body_json(
+            json!({"url": "https://example.com", "include_usage": true}),
+        ))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "base_url": "https://example.com",
             "results": [{"url": "https://example.com", "raw_content": "crawled"}],
@@ -32,7 +36,9 @@ async fn extract_crawl_map_passthrough() {
         .await;
     Mock::given(method("POST"))
         .and(path("/map"))
-        .and(body_json(json!({"url": "https://example.com", "include_usage": true})))
+        .and(body_json(
+            json!({"url": "https://example.com", "include_usage": true}),
+        ))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "base_url": "https://example.com",
             "results": ["https://example.com/a", "https://example.com/b"],
@@ -47,16 +53,41 @@ async fn extract_crawl_map_passthrough() {
     let token = common::create_proxy_key(&app, "客户端").await;
 
     // tools/list 现在暴露四个工具
-    let (_, body) = common::mcp_rpc(&app, Some(&token), json!({"jsonrpc":"2.0","id":2,"method":"tools/list"})).await;
+    let (_, body) = common::mcp_rpc(
+        &app,
+        Some(&token),
+        json!({"jsonrpc":"2.0","id":2,"method":"tools/list"}),
+    )
+    .await;
     let tools = body.unwrap()["result"]["tools"].as_array().unwrap().clone();
-    for name in ["tavily_search", "tavily_extract", "tavily_crawl", "tavily_map"] {
+    for name in [
+        "tavily_search",
+        "tavily_extract",
+        "tavily_crawl",
+        "tavily_map",
+    ] {
         assert!(tools.iter().any(|t| t["name"] == name), "缺少工具 {name}");
     }
 
     for (id, tool, args, marker) in [
-        (10, "tavily_extract", json!({"urls": ["https://example.com"]}), "extracted"),
-        (11, "tavily_crawl", json!({"url": "https://example.com"}), "crawled"),
-        (12, "tavily_map", json!({"url": "https://example.com"}), "example.com/b"),
+        (
+            10,
+            "tavily_extract",
+            json!({"urls": ["https://example.com"]}),
+            "extracted",
+        ),
+        (
+            11,
+            "tavily_crawl",
+            json!({"url": "https://example.com"}),
+            "crawled",
+        ),
+        (
+            12,
+            "tavily_map",
+            json!({"url": "https://example.com"}),
+            "example.com/b",
+        ),
     ] {
         let (_, body) = common::mcp_call_tool(&app, &token, id, tool, args).await;
         let result = &body["result"];
@@ -112,11 +143,21 @@ async fn sync_tools_share_failover_pipeline() {
             .json()
             .await
             .unwrap();
-        keys.as_array().unwrap().iter().all(|k| k["usage_fetched_at"].is_i64())
+        keys.as_array()
+            .unwrap()
+            .iter()
+            .all(|k| k["usage_fetched_at"].is_i64())
     })
     .await;
 
-    let (_, body) = common::mcp_call_tool(&app, &token, 10, "tavily_crawl", json!({"url": "https://example.com"})).await;
+    let (_, body) = common::mcp_call_tool(
+        &app,
+        &token,
+        10,
+        "tavily_crawl",
+        json!({"url": "https://example.com"}),
+    )
+    .await;
     assert_ne!(body["result"]["isError"], true);
 
     let crawls: Vec<String> = upstream
