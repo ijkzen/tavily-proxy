@@ -25,6 +25,7 @@ async fn main() -> anyhow::Result<()> {
     let pool = db::init(&config.database_url).await?;
     let state = AppState {
         db: pool,
+        login_limiter: Default::default(),
         tavily_base_url: config.tavily_base_url.clone(),
     };
 

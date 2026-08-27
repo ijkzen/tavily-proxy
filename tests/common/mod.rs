@@ -26,6 +26,7 @@ pub async fn spawn_app(tavily_base_url: String) -> TestApp {
 
     let state = AppState {
         db: pool,
+        login_limiter: Default::default(),
         tavily_base_url: tavily_base_url.clone(),
     };
     tokio::spawn(async move {
@@ -34,7 +35,10 @@ pub async fn spawn_app(tavily_base_url: String) -> TestApp {
 
     TestApp {
         base_url: format!("http://127.0.0.1:{port}"),
-        client: reqwest::Client::new(),
+        client: reqwest::Client::builder()
+            .cookie_store(true)
+            .build()
+            .expect("client"),
         tavily_base_url,
         _dir: dir,
     }
@@ -44,4 +48,25 @@ pub async fn spawn_app(tavily_base_url: String) -> TestApp {
 #[allow(dead_code)]
 pub async fn spawn_app_no_upstream() -> TestApp {
     spawn_app("http://127.0.0.1:9".into()).await
+}
+
+/// 创建账号（首访引导），随后的请求都带登录态。
+#[allow(dead_code)]
+pub async fn setup_and_login(app: &TestApp) {
+    let resp = app
+        .client
+        .post(format!("{}/api/setup", app.base_url))
+        .json(&serde_json::json!({"username": "zen", "password": "correct horse battery staple"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), reqwest::StatusCode::OK, "setup 应成功");
+    let resp = app
+        .client
+        .post(format!("{}/api/login", app.base_url))
+        .json(&serde_json::json!({"username": "zen", "password": "correct horse battery staple"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), reqwest::StatusCode::OK, "login 应成功");
 }

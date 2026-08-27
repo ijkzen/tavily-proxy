@@ -4,7 +4,7 @@
 
 **Blocked by:** 01 — 行走骨架
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [ ] 无用户时首访引导可创建账号；有用户后引导页返回不可再用
 - [ ] 密码以 argon2 哈希落库，登录成功建立 session cookie（HttpOnly+SameSite）
