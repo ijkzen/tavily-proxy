@@ -19,7 +19,11 @@ use crate::quota;
 pub enum Outcome {
     Success { payload: Value, credits: i64, upstream_key_id: i64 },
     /// 上游 4xx（调用方问题），原样带状态码与响应体透传
-    Passthrough { status: u16, payload: Value },
+    Passthrough {
+        status: u16,
+        payload: Value,
+        upstream_key_id: i64,
+    },
     /// 全部 key 都不可用
     AllUnavailable,
 }
@@ -58,7 +62,13 @@ pub async fn execute(state: &AppState, path: &str, body: &Value) -> Outcome {
                     mark_invalid(state, key_id).await;
                     tried.insert(key_id);
                 }
-                400..=499 => return Outcome::Passthrough { status, payload },
+                400..=499 => {
+                    return Outcome::Passthrough {
+                        status,
+                        payload,
+                        upstream_key_id: key_id,
+                    };
+                }
                 _ => {
                     // 5xx：上游抖动，不动状态，换 key 重试
                     tried.insert(key_id);

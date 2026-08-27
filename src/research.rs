@@ -11,11 +11,22 @@ use crate::balancer::{self, Outcome};
 use crate::{mcp, quota};
 
 pub enum ResearchOutcome {
-    Completed { payload: Value },
+    Completed {
+        payload: Value,
+        credits: i64,
+        upstream_key_id: i64,
+    },
     /// 提交被上游 4xx 拒绝（调用方问题），透传
-    SubmitPassthrough { status: u16, payload: Value },
+    SubmitPassthrough {
+        status: u16,
+        payload: Value,
+        upstream_key_id: i64,
+    },
     /// 轮询阶段的失败：超时 / 上游 failed / 任务丢失等
-    Failed(String),
+    Failed {
+        message: String,
+        upstream_key_id: Option<i64>,
+    },
     AllUnavailable,
 }
 
@@ -30,15 +41,26 @@ pub async fn run(state: &AppState, proxy_key_id: i64, arguments: Value) -> Resea
                 credits,
                 upstream_key_id,
             } => (payload, credits, upstream_key_id),
-            Outcome::Passthrough { status, payload } => {
-                return ResearchOutcome::SubmitPassthrough { status, payload };
+            Outcome::Passthrough {
+                status,
+                payload,
+                upstream_key_id,
+            } => {
+                return ResearchOutcome::SubmitPassthrough {
+                    status,
+                    payload,
+                    upstream_key_id,
+                };
             }
             Outcome::AllUnavailable => return ResearchOutcome::AllUnavailable,
         };
     mcp::record_proxy_usage(state, proxy_key_id, submit_credits).await;
 
     let Some(request_id) = payload["request_id"].as_str().map(str::to_owned) else {
-        return ResearchOutcome::Failed("上游未返回 request_id，无法跟踪调研任务".into());
+        return ResearchOutcome::Failed {
+            message: "上游未返回 request_id，无法跟踪调研任务".into(),
+            upstream_key_id: Some(upstream_key_id),
+        };
     };
 
     let _ = sqlx::query(
@@ -53,24 +75,40 @@ pub async fn run(state: &AppState, proxy_key_id: i64, arguments: Value) -> Resea
     .await;
 
     let Some(api_key) = upstream_api_key(state, upstream_key_id).await else {
-        return ResearchOutcome::Failed("调研任务绑定的上游密钥已不存在，无法轮询结果".into());
+        return ResearchOutcome::Failed {
+            message: "调研任务绑定的上游密钥已不存在，无法轮询结果".into(),
+            upstream_key_id: Some(upstream_key_id),
+        };
     };
 
-    poll_until_done(state, upstream_key_id, proxy_key_id, &request_id, &api_key).await
+    poll_until_done(
+        state,
+        upstream_key_id,
+        proxy_key_id,
+        submit_credits,
+        &request_id,
+        &api_key,
+    )
+    .await
 }
 
 async fn poll_until_done(
     state: &AppState,
     upstream_key_id: i64,
     proxy_key_id: i64,
+    submit_credits: i64,
     request_id: &str,
     api_key: &str,
 ) -> ResearchOutcome {
+    let failed = |message: String| ResearchOutcome::Failed {
+        message,
+        upstream_key_id: Some(upstream_key_id),
+    };
     let deadline = Instant::now() + state.research_timeout;
     loop {
         tokio::time::sleep(state.research_poll_interval).await;
         if Instant::now() >= deadline {
-            return ResearchOutcome::Failed(format!(
+            return failed(format!(
                 "调研超时：{} 秒内未完成",
                 state.research_timeout.as_secs()
             ));
@@ -85,14 +123,18 @@ async fn poll_until_done(
                     let credits = payload["usage"]["credits"].as_i64().unwrap_or(0);
                     quota::record_usage(&state.db, upstream_key_id, credits).await;
                     mcp::record_proxy_usage(state, proxy_key_id, credits).await;
-                    return ResearchOutcome::Completed { payload };
+                    return ResearchOutcome::Completed {
+                        payload,
+                        credits: submit_credits + credits,
+                        upstream_key_id,
+                    };
                 }
                 Some("failed") => {
                     let reason = payload["error"]
                         .as_str()
                         .or_else(|| payload.pointer("/detail/error").and_then(Value::as_str))
                         .unwrap_or("未知原因");
-                    return ResearchOutcome::Failed(format!("上游调研任务失败：{reason}"));
+                    return failed(format!("上游调研任务失败：{reason}"));
                 }
                 // 200 但仍在处理（pending 等中间态）→ 继续等
                 _ => continue,
@@ -100,10 +142,10 @@ async fn poll_until_done(
             // 202：仍在处理
             Ok((202, _)) => continue,
             Ok((404, _)) => {
-                return ResearchOutcome::Failed("上游找不到该调研任务（可能已过期）".into());
+                return failed("上游找不到该调研任务（可能已过期）".into());
             }
             Ok((status, payload)) => {
-                return ResearchOutcome::Failed(format!(
+                return failed(format!(
                     "轮询调研任务失败（上游 {status}）：{}",
                     mcp::upstream_error_message(&payload)
                 ));

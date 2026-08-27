@@ -4,13 +4,16 @@ use sqlx::SqlitePool;
 
 use crate::app::AppState;
 use crate::auth::now;
+use crate::request_logs;
 
-/// 后台轮询任务：按 AppState.quota_poll_interval 周期刷新所有非禁用 key 的额度。
+/// 后台轮询任务：按 AppState.quota_poll_interval 周期刷新所有非禁用 key 的额度，
+/// 顺带清理过期请求日志（保留 30 天）。
 pub fn spawn_poller(state: AppState) {
     tokio::spawn(async move {
         loop {
             tokio::time::sleep(state.quota_poll_interval).await;
             poll_once(&state).await;
+            request_logs::cleanup_expired(&state.db).await;
         }
     });
 }
