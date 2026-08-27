@@ -30,8 +30,8 @@ function ProxyKeyRow({ k, onRevoke }: { k: ProxyKey; onRevoke: (id: number) => v
   return (
     <TableRow>
       <TableCell>{k.name}</TableCell>
-      <TableCell className="max-w-72">
-        <div className="space-y-1">
+      <TableCell className="min-w-72">
+        <div className="space-y-0.5">
           <SecretLine secret={secret} masked={`tp-••••${k.key_tail}`} />
           {!k.revoked && <McpLinkLine secret={secret} />}
         </div>

@@ -81,7 +81,7 @@ export function SecretLine({ secret, masked }: { secret: Secret; masked: string 
     return <span className="text-neutral-400 text-xs">{masked}（旧密钥无明文，吊销重建后可启用）</span>
   }
   return (
-    <span className="inline-flex items-center gap-1">
+    <span className="flex items-center gap-1">
       <code className="font-mono text-sm text-neutral-600 break-all">
         {secret.visible && secret.plain !== null ? secret.plain : masked}
       </code>
@@ -96,17 +96,24 @@ export function SecretCell({ revealPath, masked }: { revealPath: string; masked:
   return <SecretLine secret={secret} masked={masked} />
 }
 
-/** MCP 集成链接行（查询参数形式）：掩码展示，复制时复制含完整 key 的链接。 */
+/** MCP 集成链接（查询参数形式）：独立一行卡片式展示，复制时含完整 key。
+ *  单元格自带 whitespace-nowrap，这里显式恢复换行，避免长链接把表格撑爆。 */
 export function McpLinkLine({ secret }: { secret: Secret }) {
   if (secret.unavailable) return null
   const origin = window.location.origin
   const shown =
-    secret.visible && secret.plain !== null ? `${origin}/mcp?key=${secret.plain}` : `${origin}/mcp?key=tp-••••`
+    secret.visible && secret.plain !== null
+      ? `${origin}/mcp?key=${secret.plain}`
+      : `${origin}/mcp?key=tp-••••`
   return (
-    <span className="inline-flex items-center gap-1">
-      <span className="text-xs text-neutral-400">MCP 链接：</span>
-      <code className="font-mono text-xs text-neutral-500 break-all">{shown}</code>
-      <ActionButtons secret={secret} copyBuild={(p) => `${origin}/mcp?key=${p}`} />
-    </span>
+    <div className="mt-1.5 rounded-md bg-neutral-100 px-2.5 py-1.5 whitespace-normal">
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-xs text-neutral-400 shrink-0">MCP 集成链接</span>
+        <ActionButtons secret={secret} copyBuild={(p) => `${origin}/mcp?key=${p}`} />
+      </div>
+      <code className="block font-mono text-xs text-neutral-600 break-all select-all">
+        {shown}
+      </code>
+    </div>
   )
 }
