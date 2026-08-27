@@ -1,0 +1,9 @@
+# 统一换行符为 LF（生产部署脚本、CI、Dockerfile 依赖行尾语义）
+
+* text=auto eol=lf
+*.sh text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+Dockerfile text eol=lf
+Dockerfile.ci text eol=lf
+*.ps1 text eol=crlf
