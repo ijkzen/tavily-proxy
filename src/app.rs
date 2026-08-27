@@ -17,6 +17,8 @@ pub struct AppState {
     pub upstream: UpstreamClient,
     pub quota_poll_interval: Duration,
     pub cooldown: Duration,
+    pub research_timeout: Duration,
+    pub research_poll_interval: Duration,
 }
 
 pub fn build(state: AppState) -> Router {

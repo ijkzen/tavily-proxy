@@ -17,13 +17,20 @@ pub struct TestApp {
 /// 启动真实 app（临时 SQLite、随机端口），上游 Tavily 指向传入的 base URL
 ///（测试里传 wiremock server 的地址）。
 pub async fn spawn_app(tavily_base_url: String) -> TestApp {
-    spawn_app_with(tavily_base_url, Duration::from_secs(60), 60).await
+    spawn_app_with(tavily_base_url, Tuning::default()).await
 }
 
 /// 额度轮询提速版本：把轮询周期压到毫秒级，供簿记测试驱动。
 #[allow(dead_code)]
 pub async fn spawn_app_fast_poll(tavily_base_url: String, interval_ms: u64) -> TestApp {
-    spawn_app_with(tavily_base_url, Duration::from_millis(interval_ms), 60).await
+    spawn_app_with(
+        tavily_base_url,
+        Tuning {
+            quota_poll: Duration::from_millis(interval_ms),
+            ..Tuning::default()
+        },
+    )
+    .await
 }
 
 /// 全参数版本：轮询周期与冷却时长都可调。
@@ -35,17 +42,56 @@ pub async fn spawn_app_tuned(
 ) -> TestApp {
     spawn_app_with(
         tavily_base_url,
-        Duration::from_millis(poll_interval_ms),
-        cooldown_secs,
+        Tuning {
+            quota_poll: Duration::from_millis(poll_interval_ms),
+            cooldown: Duration::from_secs(cooldown_secs),
+            ..Tuning::default()
+        },
     )
     .await
 }
 
-async fn spawn_app_with(
+/// research 编排版本：research 轮询间隔与总超时压到毫秒级；
+/// 额度轮询也提速（这类测试需要先把各 key 的额度播进缓存）。
+#[allow(dead_code)]
+pub async fn spawn_app_research(
     tavily_base_url: String,
-    quota_poll_interval: Duration,
-    cooldown_secs: u64,
+    research_poll_ms: u64,
+    research_timeout_ms: u64,
 ) -> TestApp {
+    spawn_app_with(
+        tavily_base_url,
+        Tuning {
+            quota_poll: Duration::from_millis(50),
+            research_poll: Duration::from_millis(research_poll_ms),
+            research_timeout: Duration::from_millis(research_timeout_ms),
+            ..Tuning::default()
+        },
+    )
+    .await
+}
+
+/// 可调运行参数。默认值与生产配置一致。
+#[allow(dead_code)]
+pub struct Tuning {
+    pub quota_poll: Duration,
+    pub cooldown: Duration,
+    pub research_poll: Duration,
+    pub research_timeout: Duration,
+}
+
+impl Default for Tuning {
+    fn default() -> Self {
+        Self {
+            quota_poll: Duration::from_secs(60),
+            cooldown: Duration::from_secs(60),
+            research_poll: Duration::from_millis(2000),
+            research_timeout: Duration::from_secs(600),
+        }
+    }
+}
+
+async fn spawn_app_with(tavily_base_url: String, tuning: Tuning) -> TestApp {
     let dir = tempfile::tempdir().expect("tempdir");
     let db_url = format!("sqlite://{}/test.db", dir.path().display());
     let pool = db::init(&db_url).await.expect("init db");
@@ -62,8 +108,10 @@ async fn spawn_app_with(
         db: pool,
         login_limiter: Default::default(),
         upstream: UpstreamClient::new(tavily_base_url.clone()),
-        quota_poll_interval,
-        cooldown: Duration::from_secs(cooldown_secs),
+        quota_poll_interval: tuning.quota_poll,
+        cooldown: tuning.cooldown,
+        research_timeout: tuning.research_timeout,
+        research_poll_interval: tuning.research_poll,
     };
     tokio::spawn(async move {
         axum::serve(listener, app::build(state)).await.unwrap();

@@ -71,4 +71,19 @@ impl UpstreamClient {
         let json = serde_json::from_str(&text).unwrap_or(Value::String(text));
         Ok((status, json))
     }
+
+    /// GET 一个上游端点（/research/{id} 轮询等），返回（状态码，解析后的响应体）。
+    pub async fn get_json(&self, path: &str, api_key: &str) -> anyhow::Result<(u16, Value)> {
+        let resp = self
+            .http
+            .get(format!("{}{path}", self.base_url))
+            .bearer_auth(api_key)
+            .send()
+            .await
+            .context("GET 上游网络错误")?;
+        let status = resp.status().as_u16();
+        let text = resp.text().await.context("读取上游响应失败")?;
+        let json = serde_json::from_str(&text).unwrap_or(Value::String(text));
+        Ok((status, json))
+    }
 }

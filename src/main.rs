@@ -31,6 +31,8 @@ async fn main() -> anyhow::Result<()> {
         upstream: tavily_proxy::upstream::UpstreamClient::new(config.tavily_base_url.clone()),
         quota_poll_interval: std::time::Duration::from_secs(config.quota_poll_interval_secs),
         cooldown: std::time::Duration::from_secs(config.cooldown_secs),
+        research_timeout: std::time::Duration::from_secs(config.research_timeout_secs),
+        research_poll_interval: std::time::Duration::from_millis(config.research_poll_interval_ms),
     };
 
     let listener = tokio::net::TcpListener::bind(("0.0.0.0", config.port)).await?;

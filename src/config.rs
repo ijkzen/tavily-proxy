@@ -5,6 +5,8 @@ pub struct Config {
     pub tavily_base_url: String,
     pub quota_poll_interval_secs: u64,
     pub cooldown_secs: u64,
+    pub research_timeout_secs: u64,
+    pub research_poll_interval_ms: u64,
 }
 
 impl Config {
@@ -26,6 +28,14 @@ impl Config {
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(60),
+            research_timeout_secs: std::env::var("RESEARCH_TIMEOUT_SECS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(600),
+            research_poll_interval_ms: std::env::var("RESEARCH_POLL_INTERVAL_MS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(2000),
         }
     }
 }

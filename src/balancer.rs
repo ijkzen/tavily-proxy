@@ -17,7 +17,7 @@ use crate::auth::now;
 use crate::quota;
 
 pub enum Outcome {
-    Success { payload: Value, credits: i64 },
+    Success { payload: Value, credits: i64, upstream_key_id: i64 },
     /// 上游 4xx（调用方问题），原样带状态码与响应体透传
     Passthrough { status: u16, payload: Value },
     /// 全部 key 都不可用
@@ -36,10 +36,14 @@ pub async fn execute(state: &AppState, path: &str, body: &Value) -> Outcome {
             continue;
         };
         match state.upstream.post_json(path, &api_key, body).await {
-            Ok((200, payload)) => {
+            Ok((status, payload)) if (200..300).contains(&status) => {
                 let credits = payload["usage"]["credits"].as_i64().unwrap_or(0);
                 quota::record_usage(&state.db, key_id, credits).await;
-                return Outcome::Success { payload, credits };
+                return Outcome::Success {
+                    payload,
+                    credits,
+                    upstream_key_id: key_id,
+                };
             }
             Ok((status, payload)) => match status {
                 429 => {

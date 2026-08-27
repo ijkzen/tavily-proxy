@@ -8,5 +8,6 @@ pub mod db;
 pub mod mcp;
 pub mod proxy_keys;
 pub mod quota;
+pub mod research;
 pub mod upstream;
 pub mod upstream_keys;

@@ -11,7 +11,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::app::AppState;
-use crate::{balancer, proxy_keys, quota};
+use crate::{balancer, proxy_keys, research};
 
 pub fn router(state: AppState) -> Router<AppState> {
     Router::new()
@@ -225,6 +225,20 @@ fn tools() -> Vec<Value> {
                 "required": ["url"]
             }
         }),
+        json!({
+            "name": "tavily_research",
+            "description": "Performs comprehensive research on a given topic using multiple sources. Returns a detailed report. This is a long-running operation that waits for completion.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "input": {"type": "string", "description": "The research task or question"},
+                    "model": {"type": "string", "enum": ["mini", "pro", "auto"], "default": "auto"},
+                    "instructions": {"type": "string", "description": "Custom instructions for the research agent"},
+                    "output_schema": {"type": "object", "description": "JSON schema the report should conform to"}
+                },
+                "required": ["input"]
+            }
+        }),
     ]
 }
 
@@ -235,7 +249,10 @@ async fn call_tool(
     name: &str,
     arguments: Value,
 ) -> Response {
-    // 同步工具：名称 → 上游 REST 路径（research 的异步编排在票 10）
+    if name == "tavily_research" {
+        return call_research_tool(state, proxy_key_id, id, arguments).await;
+    }
+    // 同步工具：名称 → 上游 REST 路径
     let path = match name {
         "tavily_search" => "/search",
         "tavily_extract" => "/extract",
@@ -244,6 +261,25 @@ async fn call_tool(
         _ => return tool_error(id, format!("未知工具: {name}")),
     };
     call_sync_tool(state, proxy_key_id, id, path, arguments).await
+}
+
+/// tavily_research：提交 + 同步轮询编排（research.rs）。
+async fn call_research_tool(
+    state: &AppState,
+    proxy_key_id: i64,
+    id: Value,
+    arguments: Value,
+) -> Response {
+    match research::run(state, proxy_key_id, arguments).await {
+        research::ResearchOutcome::Completed { payload } => tool_success(id, &payload),
+        research::ResearchOutcome::SubmitPassthrough { status, payload } => {
+            tool_error(id, format!("上游错误 {status}: {}", upstream_error_message(&payload)))
+        }
+        research::ResearchOutcome::Failed(message) => tool_error(id, message),
+        research::ResearchOutcome::AllUnavailable => {
+            tool_error(id, "所有上游密钥暂不可用（限流/耗尽/已禁用），请稍后重试或检查密钥池")
+        }
+    }
 }
 
 /// 同步工具通用管道：注入 include_usage → 选路器+状态机 → 记账/透传。
@@ -258,7 +294,7 @@ async fn call_sync_tool(
     body["include_usage"] = json!(true);
 
     match balancer::execute(state, path, &body).await {
-        balancer::Outcome::Success { payload, credits } => {
+        balancer::Outcome::Success { payload, credits, .. } => {
             record_proxy_usage(state, proxy_key_id, credits).await;
             tool_success(id, &payload)
         }
@@ -271,7 +307,7 @@ async fn call_sync_tool(
     }
 }
 
-async fn record_proxy_usage(state: &AppState, proxy_key_id: i64, credits: i64) {
+pub(crate) async fn record_proxy_usage(state: &AppState, proxy_key_id: i64, credits: i64) {
     let _ = sqlx::query("UPDATE proxy_keys SET total_credits = total_credits + ? WHERE id = ?")
         .bind(credits)
         .bind(proxy_key_id)
@@ -280,7 +316,7 @@ async fn record_proxy_usage(state: &AppState, proxy_key_id: i64, credits: i64) {
 }
 
 /// 从 Tavily 错误体里提取可读信息：{"detail": {"error": "…"}} 或 {"detail": "…"}。
-fn upstream_error_message(payload: &Value) -> String {
+pub(crate) fn upstream_error_message(payload: &Value) -> String {
     payload
         .pointer("/detail/error")
         .and_then(Value::as_str)
