@@ -98,8 +98,7 @@ async fn handle_post(
         "tools/call" => {
             let name = body["params"]["name"].as_str().unwrap_or("").to_owned();
             let arguments = body["params"]["arguments"].clone();
-            call_tool(&state, proxy_key_id, id, &name, arguments).await
-        }
+            call_tool(&state, proxy_key_id, id, &name, arguments).await        }
         _ => (
             StatusCode::OK,
             Json(json!({
@@ -139,32 +138,94 @@ fn tool_error(id: Value, message: impl Into<String>) -> Response {
 // ---------- 工具 ----------
 
 fn tools() -> Vec<Value> {
-    vec![json!({
-        "name": "tavily_search",
-        "description": "A search engine optimized for comprehensive, accurate, and trusted results. Useful for when you need to answer questions about current events. Input should be a search query.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "query": {"type": "string", "description": "Search query"},
-                "max_results": {"type": "integer", "description": "Maximum number of results (0-20)", "default": 5},
-                "search_depth": {"type": "string", "enum": ["basic", "advanced", "fast", "ultra-fast"], "default": "basic"},
-                "topic": {"type": "string", "enum": ["general", "news", "finance"], "default": "general"},
-                "time_range": {"type": "string", "enum": ["day", "week", "month", "year"]},
-                "start_date": {"type": "string", "description": "YYYY-MM-DD"},
-                "end_date": {"type": "string", "description": "YYYY-MM-DD"},
-                "include_answer": {"type": "boolean", "default": false},
-                "include_images": {"type": "boolean", "default": false},
-                "include_image_descriptions": {"type": "boolean", "default": false},
-                "include_raw_content": {"type": ["boolean", "string"], "default": false},
-                "include_domains": {"type": "array", "items": {"type": "string"}},
-                "exclude_domains": {"type": "array", "items": {"type": "string"}},
-                "country": {"type": "string"},
-                "include_favicon": {"type": "boolean", "default": false},
-                "exact_match": {"type": "boolean", "default": false}
-            },
-            "required": ["query"]
-        }
-    })]
+    let bool_default_false = json!({"type": "boolean", "default": false});
+    let string_array = json!({"type": "array", "items": {"type": "string"}});
+    let extract_depth = json!({"type": "string", "enum": ["basic", "advanced"], "default": "basic"});
+    let format_enum = json!({"type": "string", "enum": ["markdown", "text"], "default": "markdown"});
+
+    vec![
+        json!({
+            "name": "tavily_search",
+            "description": "A search engine optimized for comprehensive, accurate, and trusted results. Useful for when you need to answer questions about current events. Input should be a search query.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Search query"},
+                    "max_results": {"type": "integer", "description": "Maximum number of results (0-20)", "default": 5},
+                    "search_depth": {"type": "string", "enum": ["basic", "advanced", "fast", "ultra-fast"], "default": "basic"},
+                    "topic": {"type": "string", "enum": ["general", "news", "finance"], "default": "general"},
+                    "time_range": {"type": "string", "enum": ["day", "week", "month", "year"]},
+                    "start_date": {"type": "string", "description": "YYYY-MM-DD"},
+                    "end_date": {"type": "string", "description": "YYYY-MM-DD"},
+                    "include_answer": {"type": "boolean", "default": false},
+                    "include_images": {"type": "boolean", "default": false},
+                    "include_image_descriptions": {"type": "boolean", "default": false},
+                    "include_raw_content": {"type": ["boolean", "string"], "default": false},
+                    "include_domains": string_array,
+                    "exclude_domains": string_array,
+                    "country": {"type": "string"},
+                    "include_favicon": {"type": "boolean", "default": false},
+                    "exact_match": {"type": "boolean", "default": false}
+                },
+                "required": ["query"]
+            }
+        }),
+        json!({
+            "name": "tavily_extract",
+            "description": "Extract raw content from one or more URLs (markdown or text).",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "urls": {"type": "array", "items": {"type": "string"}, "description": "URLs to extract (max 20)"},
+                    "extract_depth": extract_depth,
+                    "include_images": bool_default_false,
+                    "include_favicon": {"type": "boolean", "default": false},
+                    "format": format_enum,
+                    "query": {"type": "string", "description": "Focus extraction on content relevant to this query"}
+                },
+                "required": ["urls"]
+            }
+        }),
+        json!({
+            "name": "tavily_crawl",
+            "description": "Crawl a website starting from a URL, extracting content from pages with configurable depth and breadth.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "url": {"type": "string", "description": "The root URL to begin the crawl"},
+                    "max_depth": {"type": "integer", "minimum": 1, "default": 1},
+                    "max_breadth": {"type": "integer", "minimum": 1, "default": 20},
+                    "limit": {"type": "integer", "minimum": 1, "default": 50},
+                    "instructions": {"type": "string", "description": "Natural language instructions for the crawler"},
+                    "select_paths": string_array,
+                    "select_domains": string_array,
+                    "allow_external": {"type": "boolean", "default": true},
+                    "extract_depth": extract_depth,
+                    "format": format_enum,
+                    "include_favicon": {"type": "boolean", "default": false}
+                },
+                "required": ["url"]
+            }
+        }),
+        json!({
+            "name": "tavily_map",
+            "description": "Map a website's structure. Returns a list of URLs found starting from the base URL.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "url": {"type": "string", "description": "The root URL to begin the mapping"},
+                    "max_depth": {"type": "integer", "minimum": 1, "default": 1},
+                    "max_breadth": {"type": "integer", "minimum": 1, "default": 20},
+                    "limit": {"type": "integer", "minimum": 1, "default": 50},
+                    "instructions": {"type": "string"},
+                    "select_paths": string_array,
+                    "select_domains": string_array,
+                    "allow_external": {"type": "boolean", "default": true}
+                },
+                "required": ["url"]
+            }
+        }),
+    ]
 }
 
 async fn call_tool(
@@ -174,18 +235,29 @@ async fn call_tool(
     name: &str,
     arguments: Value,
 ) -> Response {
-    match name {
-        "tavily_search" => call_search(state, proxy_key_id, id, arguments).await,
-        _ => tool_error(id, format!("未知工具: {name}")),
-    }
+    // 同步工具：名称 → 上游 REST 路径（research 的异步编排在票 10）
+    let path = match name {
+        "tavily_search" => "/search",
+        "tavily_extract" => "/extract",
+        "tavily_crawl" => "/crawl",
+        "tavily_map" => "/map",
+        _ => return tool_error(id, format!("未知工具: {name}")),
+    };
+    call_sync_tool(state, proxy_key_id, id, path, arguments).await
 }
 
-/// 经选路器+状态机执行 search（票 08）。
-async fn call_search(state: &AppState, proxy_key_id: i64, id: Value, arguments: Value) -> Response {
+/// 同步工具通用管道：注入 include_usage → 选路器+状态机 → 记账/透传。
+async fn call_sync_tool(
+    state: &AppState,
+    proxy_key_id: i64,
+    id: Value,
+    path: &str,
+    arguments: Value,
+) -> Response {
     let mut body = arguments;
     body["include_usage"] = json!(true);
 
-    match balancer::execute(state, "/search", &body).await {
+    match balancer::execute(state, path, &body).await {
         balancer::Outcome::Success { payload, credits } => {
             record_proxy_usage(state, proxy_key_id, credits).await;
             tool_success(id, &payload)

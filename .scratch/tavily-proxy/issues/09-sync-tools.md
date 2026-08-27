@@ -4,7 +4,7 @@
 
 **Blocked by:** 07 — MCP 端点 + tavily_search 直转
 
-**Status:** claimed
+**Status:** resolved
 
 - [ ] 三个工具名称与参数表面和官方一致，结果原样返回
 - [ ] 三个工具的请求都经过选路与状态机（复用而非另写）
