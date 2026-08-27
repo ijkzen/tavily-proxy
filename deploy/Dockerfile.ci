@@ -1,0 +1,6 @@
+# CI 专用：二进制由 GitHub Actions 用 cross 编译产出（target/x86_64-unknown-linux-musl/release/），
+# 本文件只做 COPY 打包（与 deploy/Dockerfile 等价，但路径适配 CI 的 build context）。
+FROM scratch
+COPY target/x86_64-unknown-linux-musl/release/tavily-proxy /tavily-proxy
+EXPOSE 8080
+ENTRYPOINT ["/tavily-proxy"]
