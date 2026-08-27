@@ -4,3 +4,6 @@
 /data
 *.db
 /deploy/deploy.sh
+/deploy/deploy.sh
+/deploy/Dockerfile
+/deploy/docker-compose.yml
