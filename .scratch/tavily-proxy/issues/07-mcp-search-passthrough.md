@@ -4,7 +4,7 @@
 
 **Blocked by:** 04 — 上游密钥池管理；06 — 代理密钥管理
 
-**Status:** claimed
+**Status:** resolved
 
 - [ ] MCP 客户端能完成 initialize → tools/list → tools/call 全流程
 - [ ] Bearer 与 ?key= 两种传 key 方式都可用；无效/吊销 key 被拒绝

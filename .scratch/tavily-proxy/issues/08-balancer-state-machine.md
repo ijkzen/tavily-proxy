@@ -4,7 +4,7 @@
 
 **Blocked by:** 05 — 额度簿记；07 — MCP 端点 + tavily_search 直转
 
-**Status:** ready-for-agent
+**Status:** claimed
 
 - [ ] 两个 key 剩余额度不同时，请求落到额度多者；平手时随机分布
 - [ ] 429：本请求被换 key 重试成功，原 key 冷却期内不再被选中，冷却结束自动恢复

@@ -102,3 +102,120 @@ where
     }
     panic!("条件未在 3 秒内满足");
 }
+
+// ---------- MCP Streamable HTTP 测试客户端 ----------
+
+/// 发一个 JSON-RPC 请求到 /mcp。proxy_key 同时走 Bearer 头。
+/// 返回（HTTP 状态， JSON-RPC 响应体）。兼容 application/json 与 SSE 两种响应。
+#[allow(dead_code)]
+pub async fn mcp_rpc(
+    app: &TestApp,
+    proxy_key: Option<&str>,
+    body: serde_json::Value,
+) -> (reqwest::StatusCode, Option<serde_json::Value>) {
+    let mut req = app
+        .client
+        .post(format!("{}/mcp", app.base_url))
+        .header("Accept", "application/json, text/event-stream")
+        .header("Content-Type", "application/json");
+    if let Some(key) = proxy_key {
+        req = req.bearer_auth(key);
+    }
+    let resp = req.json(&body).send().await.unwrap();
+    let status = resp.status();
+    let content_type = resp
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_owned();
+    let text = resp.text().await.unwrap();
+
+    let parsed = if content_type.contains("text/event-stream") {
+        // SSE 帧：取最后一个 data: 载荷
+        text.lines()
+            .filter_map(|line| line.strip_prefix("data:"))
+            .filter_map(|data| serde_json::from_str(data.trim()).ok())
+            .last()
+    } else {
+        serde_json::from_str(&text).ok()
+    };
+    (status, parsed)
+}
+
+/// initialize 握手。
+#[allow(dead_code)]
+pub async fn mcp_initialize(
+    app: &TestApp,
+    proxy_key: Option<&str>,
+) -> (reqwest::StatusCode, Option<serde_json::Value>) {
+    mcp_rpc(
+        app,
+        proxy_key,
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-03-26",
+                "capabilities": {},
+                "clientInfo": {"name": "integration-test", "version": "0.1.0"}
+            }
+        }),
+    )
+    .await
+}
+
+/// tools/call。
+#[allow(dead_code)]
+pub async fn mcp_call_tool(
+    app: &TestApp,
+    proxy_key: &str,
+    id: i64,
+    tool: &str,
+    arguments: serde_json::Value,
+) -> (reqwest::StatusCode, serde_json::Value) {
+    let (status, body) = mcp_rpc(
+        app,
+        Some(proxy_key),
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": "tools/call",
+            "params": {"name": tool, "arguments": arguments}
+        }),
+    )
+    .await;
+    (status, body.expect("tools/call 应有 JSON-RPC 响应"))
+}
+
+/// 签发一个代理密钥，返回完整 token（仅此一次可得）。
+#[allow(dead_code)]
+pub async fn create_proxy_key(app: &TestApp, name: &str) -> String {
+    let resp = app
+        .client
+        .post(format!("{}/api/proxy-keys", app.base_url))
+        .json(&serde_json::json!({"name": name}))
+        .send()
+        .await
+        .unwrap();
+    resp.json::<serde_json::Value>().await.unwrap()["key"]
+        .as_str()
+        .unwrap()
+        .to_owned()
+}
+
+/// 添加一个上游密钥，返回 id。
+#[allow(dead_code)]
+pub async fn add_upstream_key(app: &TestApp, key: &str, nickname: &str) -> i64 {
+    let resp = app
+        .client
+        .post(format!("{}/api/upstream-keys", app.base_url))
+        .json(&serde_json::json!({"key": key, "nickname": nickname, "reset_day": 1}))
+        .send()
+        .await
+        .unwrap();
+    resp.json::<serde_json::Value>().await.unwrap()["id"]
+        .as_i64()
+        .unwrap()
+}

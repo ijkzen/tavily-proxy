@@ -7,7 +7,7 @@ use std::time::Duration;
 use crate::auth::LoginRateLimiter;
 use crate::crypto::Crypto;
 use crate::upstream::UpstreamClient;
-use crate::{assets, auth, proxy_keys, quota, upstream_keys};
+use crate::{assets, auth, mcp, proxy_keys, quota, upstream_keys};
 
 #[derive(Clone)]
 pub struct AppState {
@@ -25,6 +25,7 @@ pub fn build(state: AppState) -> Router {
         .nest("/api", auth::router())
         .nest("/api", upstream_keys::router())
         .nest("/api", proxy_keys::router())
+        .merge(mcp::router(state.clone()))
         .fallback(assets::static_handler)
         .with_state(state)
 }

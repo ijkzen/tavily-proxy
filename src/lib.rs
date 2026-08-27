@@ -1,9 +1,11 @@
 pub mod app;
 pub mod assets;
 pub mod auth;
+pub mod balancer;
 pub mod config;
 pub mod crypto;
 pub mod db;
+pub mod mcp;
 pub mod proxy_keys;
 pub mod quota;
 pub mod upstream;
