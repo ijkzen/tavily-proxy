@@ -1,0 +1,28 @@
+# tavily-proxy Docker Compose 示例
+#
+# 使用 GitHub Container Registry 上的官方镜像，一行启动：
+#   docker compose up -d
+#
+# 首次启动后访问 http://localhost:8080 打开初始化流程：
+# 创建管理员账号 → 添加 Tavily 上游密钥 → 生成 tp- 代理密钥供 MCP 客户端接入。
+# 数据（SQLite 数据库）保存在 ./data，可通过环境变量 DATA_DIR 修改。
+#
+# 生产部署建议：
+#   - 将容器监听限制在回环地址或交由反向代理（Caddy/Nginx）处理 TLS
+#   - 至少配置一个 Tavily 官方 API key（https://app.tavily.com/）
+services:
+  tavily-proxy:
+    image: ghcr.io/ijkzen/tavily-proxy:latest
+    container_name: tavily-proxy
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8080:8080"
+    environment:
+      PORT: "8080"
+      DATABASE_URL: sqlite:///data/tavily-proxy.db
+      # 可选：额度轮询间隔 / 429 冷却时长 / 日志保留天数
+      # QUOTA_POLL_INTERVAL_SECS: "60"
+      # COOLDOWN_SECS: "60"
+      # LOG_RETENTION_DAYS: "30"
+    volumes:
+      - ./data:/data

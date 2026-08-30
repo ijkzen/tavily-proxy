@@ -47,6 +47,30 @@ DATABASE_URL=sqlite://data/tavily-proxy.db cargo run
 创建管理员账号（设置登录密码），然后添加你的 Tavily 上游密钥——此时生成的代理密钥
 （`tp-...`）就是 MCP 客户端的接入凭据。
 
+### Docker 运行
+
+```bash
+# 从 GHCR 拉取镜像
+docker pull ghcr.io/ijkzen/tavily-proxy:latest
+
+# 运行（数据保存在 ./data）
+docker run -d --name tavily-proxy \
+  -p 127.0.0.1:8080:8080 \
+  -e DATABASE_URL=sqlite:///data/tavily-proxy.db \
+  -v "$(pwd)"/data:/data \
+  ghcr.io/ijkzen/tavily-proxy:latest
+```
+
+### Docker Compose
+
+仓库根目录提供 [`compose.yaml`](compose.yaml) 示例：
+
+```bash
+docker compose up -d
+```
+
+首次启动后访问 <http://localhost:8080/> 完成初始化（创建管理员账号并添加 Tavily 上游密钥）。
+
 ### 接入 MCP 客户端
 
 ```json
