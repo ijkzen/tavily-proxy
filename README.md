@@ -15,6 +15,12 @@
 - **管理界面**：Web 登录（单用户）+ 中文看板——密钥池用量与健康状态、请求日志（保留 30 天）、成功率与延迟统计
 - **单二进制**：Rust（axum + sqlx/SQLite）+ 内嵌 React 前端（rust-embed），`FROM scratch` 即可运行
 
+## 界面预览
+
+| 看板（用量与健康状态） | 上游密钥池（额度感知管理） |
+| --- | --- |
+| ![看板](docs/screenshots/dashboard.png) | ![上游密钥池](docs/screenshots/upstream-keys.png) |
+
 ## 架构
 
 ```
