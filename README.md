@@ -2,10 +2,11 @@
 
 [![CI](https://github.com/ijkzen/tavily-proxy/actions/workflows/ci.yml/badge.svg)](https://github.com/ijkzen/tavily-proxy/actions/workflows/ci.yml)
 
-一个暴露在公网的单用户代理服务：代理 Tavily 的全部 MCP 能力，在多个 Tavily 官方密钥之间做额度感知的负载均衡。
+把 Tavily 官方的 [远程 MCP 服务器](https://docs.tavily.com/mcp-server) 变成**自托管版本**：
+你自己持有上游密钥池，通过统一的 MCP 端点向外提供 `tavily_search` 等工具，并在多个上游
+密钥之间自动选路、限流冷却、额度耗尽切换与请求日志统计。
 
-本服务把 Tavily 官方的 [远程 MCP 服务器](https://docs.tavily.com/mcp-server) 变成**自托管版本**：
-你自己持有上游密钥池，通过统一的 MCP 端点向外提供 `tavily_search` 等工具，并在多个上游密钥之间自动选路、限流冷却、额度耗尽切换与请求日志统计。
+## 功能特性
 
 - **MCP 端点**：`POST /mcp`（Streamable HTTP），工具名称与参数和官方完全一致，MCP 客户端可零改动接入
 - **密钥池**：多个 Tavily 官方密钥（`tvly-...`）统一管理，额度感知选路（有效剩余 credits 最多优先）
@@ -22,7 +23,7 @@ MCP 客户端 ──POST /mcp──> tavily-proxy ──REST──> api.tavily.c
                                   └──> SQLite（密钥池、日志、会话）
 ```
 
-- `docs/adr/`：架构决策记录（为什么走 REST 直转而非 MCP 桥、额度数据来源、公网首次初始化等）
+- `docs/adr/`：架构决策记录
 - `CONTEXT.md`：领域术语表（上游密钥 / 代理密钥 / 密钥池 / 额度 / 健康状态）
 
 ## 快速开始
@@ -43,11 +44,27 @@ cd web && pnpm install --frozen-lockfile && pnpm build && cd ..
 DATABASE_URL=sqlite://data/tavily-proxy.db cargo run
 ```
 
-首次启动会自动建库建表并打开公网初始化流程：浏览器访问 <http://localhost:8080/>，
+首次启动会自动建库建表并打开初始化流程：浏览器访问 <http://localhost:8080/>，
 创建管理员账号（设置登录密码），然后添加你的 Tavily 上游密钥——此时生成的代理密钥
 （`tp-...`）就是 MCP 客户端的接入凭据。
 
-### Docker 运行
+### 接入 MCP 客户端
+
+```json
+{
+  "mcpServers": {
+    "tavily": {
+      "type": "http",
+      "url": "http://localhost:8080/mcp",
+      "headers": { "Authorization": "Bearer tp-你的代理密钥" }
+    }
+  }
+}
+```
+
+`?key=` query 传参同样支持。
+
+## Docker 运行
 
 ```bash
 # 从 GHCR 拉取镜像
@@ -70,22 +87,6 @@ docker compose up -d
 ```
 
 首次启动后访问 <http://localhost:8080/> 完成初始化（创建管理员账号并添加 Tavily 上游密钥）。
-
-### 接入 MCP 客户端
-
-```json
-{
-  "mcpServers": {
-    "tavily": {
-      "type": "http",
-      "url": "https://你的域名/mcp",
-      "headers": { "Authorization": "Bearer tp-你的代理密钥" }
-    }
-  }
-}
-```
-
-`?key=` query 传参同样支持。
 
 ## 配置
 
@@ -116,14 +117,6 @@ cargo fmt --check
 CI（`.github/workflows/ci.yml`）在 push/PR 时运行测试、clippy、fmt，并在 main 分支
 构建 `x86_64-unknown-linux-musl` 静态二进制、推送 GHCR 镜像
 （`ghcr.io/ijkzen/tavily-proxy`）。
-
-## 部署
-
-`deploy/deploy.sh` 是一键部署到生产主机（frp-ali）的脚本：本机交叉编译 → scp →
-远端 `FROM scratch` 打包 → Caddy 反向代理（泛证书）→ 阿里云 DNS。脚本头部注释
-说明了完整流程与前置条件（`pnpm`、`zig`、`cargo-zigbuild`、到 frp-ali 的 ssh）。
-
-生产实例：<https://tavily.ijkzen.cn>（单用户服务，不开放注册）。
 
 ## 文档
 
