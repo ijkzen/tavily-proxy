@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { KeyRound, PackageOpen, RefreshCw, TriangleAlert } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -6,6 +7,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Layout } from '@/components/Layout'
 import { api } from '@/lib/api'
 import { STATUS_LABEL, STATUS_VARIANT, type UpstreamKey } from '@/lib/upstream-keys'
+import { cn } from '@/lib/utils'
 
 interface ProxyKey {
   id: number
@@ -73,7 +75,7 @@ export default function DashboardPage() {
     if (filterProxyKey) params.set('proxy_key_id', filterProxyKey)
     if (filterTool) params.set('tool', filterTool)
     if (filterSuccess) params.set('success', filterSuccess)
-    const qs = params.size > 0 ? `?${params}` : ''
+    const qs = params.size > 0 ? `?${params.toString()}` : ''
 
     const [uk, pk, st, lg, al] = await Promise.all([
       api<UpstreamKey[]>('/api/upstream-keys'),
@@ -96,88 +98,110 @@ export default function DashboardPage() {
   }, [refresh])
 
   const selectClass =
-    'h-9 rounded-md border border-neutral-300 bg-white px-2 text-sm shadow-sm focus:outline-none focus:ring-1 focus:ring-neutral-400'
+    'h-9 rounded-md border border-input bg-card px-2 text-sm shadow-sm focus:outline-none focus:ring-1 focus:ring-ring'
+
+  const activeCount = upstreamKeys.filter((k) => k.status === 'active').length
+  const coolingCount = upstreamKeys.filter((k) => k.status === 'cooling').length
+  const exhaustedCount = upstreamKeys.filter((k) => k.status === 'exhausted').length
 
   return (
     <Layout title="看板">
-      {/* 聚合统计 */}
-      <div className="grid grid-cols-2 gap-4 sm:grid-cols-5 mb-6">
-        <StatCard label="总请求（30 天）" value={stats?.total ?? '—'} />
-        <StatCard
-          label="成功率"
-          value={stats ? `${(stats.success_rate * 100).toFixed(1)}%` : '—'}
-        />
-        <StatCard
-          label="平均延迟"
-          value={stats ? `${Math.round(stats.avg_duration_ms)} ms` : '—'}
-        />
-        <StatCard label="p95 延迟" value={stats ? `${stats.p95_duration_ms} ms` : '—'} />
-        <StatCard label="总消耗 credits" value={stats?.total_credits ?? '—'} />
-      </div>
-
-      {/* 告警：401 自动禁用、额度轮询失败等 */}
-      {alerts.length > 0 && (
-        <Card className="mb-6 border-amber-200 bg-amber-50">
-          <CardHeader>
-            <CardTitle className="text-amber-800">告警（{alerts.length}）</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-2">
-            {alerts.slice(0, 5).map((a) => (
-              <div key={a.id} className="flex items-baseline gap-3 text-sm">
-                <span className="shrink-0 text-neutral-500">{fmtTime(a.created_at)}</span>
-                <span className="shrink-0 font-medium">
-                  {upstreamKeys.find((k) => k.id === a.upstream_key_id)?.nickname ?? '系统'}
-                </span>
-                <span className="text-neutral-700">{a.message}</span>
-              </div>
-            ))}
-            {alerts.length > 5 && (
-              <p className="text-sm text-neutral-500">… 其余 {alerts.length - 5} 条略</p>
-            )}
-          </CardContent>
-        </Card>
-      )}
-
-      <div className="grid gap-4 lg:grid-cols-2 mb-6">
-        {/* 上游密钥用量 */}
-        <Card>
-          <CardHeader>
-            <CardTitle>上游密钥用量</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {upstreamKeys.map((k) => {
-              const pct = k.limit ? Math.min(100, (k.usage / k.limit) * 100) : null
-              return (
-                <div key={k.id} className="space-y-1">
-                  <div className="flex items-center justify-between text-sm">
+      {/* 密钥池签名卡：额度感知选路的健康总览 */}
+      <Card className="mb-6">
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <CardTitle className="flex items-center gap-2">
+              <KeyRound className="size-4 text-primary" />
+              密钥池
+            </CardTitle>
+            <span className="text-xs text-muted-foreground tabular-nums">
+              {upstreamKeys.length === 0
+                ? '未配置'
+                : `${activeCount} 正常 · ${coolingCount} 冷却 · ${exhaustedCount} 耗尽`}
+            </span>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {upstreamKeys.map((k) => {
+            const pct = k.limit ? Math.min(100, (k.usage / k.limit) * 100) : null
+            return (
+              <div key={k.id} className="space-y-1.5">
+                <div className="flex items-center justify-between gap-4 text-sm">
+                  <div className="flex items-center gap-2">
                     <span className="font-medium">{k.nickname}</span>
-                    <span className="flex items-center gap-2">
-                      <span className="text-neutral-500">
-                        {k.limit === null ? `${k.usage} / 未知` : `${k.usage} / ${k.limit}`}
-                      </span>
-                      <Badge variant={STATUS_VARIANT[k.status]}>{STATUS_LABEL[k.status]}</Badge>
-                    </span>
+                    <Badge variant={STATUS_VARIANT[k.status]}>{STATUS_LABEL[k.status]}</Badge>
                   </div>
-                  <div className="h-2 rounded-full bg-neutral-100 overflow-hidden">
-                    <div
-                      className={`h-full rounded-full ${
-                        pct !== null && pct > 90
-                          ? 'bg-red-500'
-                          : pct !== null && pct > 70
-                            ? 'bg-amber-500'
-                            : 'bg-emerald-500'
-                      }`}
-                      style={{ width: `${pct ?? 0}%` }}
-                    />
-                  </div>
+                  <span className="font-mono text-xs text-muted-foreground tabular-nums whitespace-nowrap">
+                    {k.limit === null ? `${k.usage} / 未知` : `${k.usage} / ${k.limit}`}
+                    <span className="mx-1 text-border">·</span>每月 {k.reset_day} 日重置
+                  </span>
                 </div>
-              )
-            })}
-            {upstreamKeys.length === 0 && (
-              <p className="text-sm text-neutral-500">还没有上游密钥</p>
-            )}
-          </CardContent>
-        </Card>
+                <div className="h-2 rounded-full bg-muted overflow-hidden">
+                  <div
+                    className={cn(
+                      'h-full rounded-full transition-all',
+                      pct !== null && pct > 90
+                        ? 'bg-red-500'
+                        : pct !== null && pct > 70
+                          ? 'bg-amber-500'
+                          : 'bg-emerald-500'
+                    )}
+                    style={{ width: `${pct ?? 0}%` }}
+                  />
+                </div>
+              </div>
+            )
+          })}
+          {upstreamKeys.length === 0 && (
+            <div className="flex flex-col items-center gap-2 py-6 text-muted-foreground">
+              <KeyRound className="size-6" />
+              <p className="text-sm">还没有上游密钥，去「上游密钥」页添加第一个</p>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* 统计数据带 */}
+      <Card className="mb-6">
+        <CardContent className="grid grid-cols-2 gap-y-6 sm:grid-cols-3 lg:grid-cols-5 px-0 py-0">
+          <StatCell label="总请求（30 天）" value={stats?.total ?? '—'} />
+          <StatCell label="成功率" value={stats ? `${(stats.success_rate * 100).toFixed(1)}%` : '—'} />
+          <StatCell label="平均延迟" value={stats ? `${Math.round(stats.avg_duration_ms)} ms` : '—'} />
+          <StatCell label="p95 延迟" value={stats ? `${stats.p95_duration_ms} ms` : '—'} />
+          <StatCell label="总消耗 credits" value={stats?.total_credits ?? '—'} />
+        </CardContent>
+      </Card>
+
+      <div className={cn('grid gap-4 mb-6', alerts.length > 0 && 'lg:grid-cols-2')}>
+        {/* 告警：401 自动禁用、额度轮询失败等 */}
+        {alerts.length > 0 && (
+          <Card className="border-amber-200 bg-amber-50 dark:border-amber-500/30 dark:bg-amber-500/10">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-amber-800 dark:text-amber-300">
+                <TriangleAlert className="size-4" />
+                告警（{alerts.length}）
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-2">
+              {alerts.slice(0, 5).map((a) => (
+                <div key={a.id} className="flex items-baseline gap-3 text-sm">
+                  <span className="shrink-0 text-amber-700/70 dark:text-amber-300/70 tabular-nums">
+                    {fmtTime(a.created_at)}
+                  </span>
+                  <span className="shrink-0 font-medium text-amber-900 dark:text-amber-200">
+                    {upstreamKeys.find((k) => k.id === a.upstream_key_id)?.nickname ?? '系统'}
+                  </span>
+                  <span className="text-amber-800/90 dark:text-amber-200/90">{a.message}</span>
+                </div>
+              ))}
+              {alerts.length > 5 && (
+                <p className="text-sm text-amber-700/70 dark:text-amber-300/70">
+                  … 其余 {alerts.length - 5} 条略
+                </p>
+              )}
+            </CardContent>
+          </Card>
+        )}
 
         {/* 代理密钥用量 */}
         <Card>
@@ -197,13 +221,13 @@ export default function DashboardPage() {
                 {proxyKeys.map((k) => (
                   <TableRow key={k.id}>
                     <TableCell>{k.name}</TableCell>
-                    <TableCell>{k.total_credits}</TableCell>
-                    <TableCell className="text-neutral-500">{fmtTime(k.last_used_at)}</TableCell>
+                    <TableCell className="tabular-nums">{k.total_credits}</TableCell>
+                    <TableCell className="text-muted-foreground tabular-nums">{fmtTime(k.last_used_at)}</TableCell>
                   </TableRow>
                 ))}
                 {proxyKeys.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={3} className="text-center text-neutral-500 py-6">
+                    <TableCell colSpan={3} className="text-center text-muted-foreground py-6">
                       还没有代理密钥
                     </TableCell>
                   </TableRow>
@@ -219,11 +243,14 @@ export default function DashboardPage() {
         <CardHeader>
           <div className="flex items-center justify-between">
             <CardTitle>请求日志（共 {logs.total} 条）</CardTitle>
-            <Button variant="outline" size="sm" onClick={refresh}>刷新</Button>
+            <Button variant="outline" size="sm" onClick={refresh}>
+              <RefreshCw className="size-3.5" />
+              刷新
+            </Button>
           </div>
         </CardHeader>
         <CardContent>
-          <div className="flex gap-3 mb-4">
+          <div className="flex flex-wrap gap-3 mb-4">
             <select
               className={selectClass}
               value={filterProxyKey}
@@ -269,8 +296,8 @@ export default function DashboardPage() {
             </TableHeader>
             <TableBody>
               {logs.items.map((l) => (
-                <TableRow key={l.id}>
-                  <TableCell className="whitespace-nowrap text-neutral-500">
+                <TableRow key={l.id} className={cn(!l.success && 'bg-red-500/[0.04] dark:bg-red-500/10')}>
+                  <TableCell className="whitespace-nowrap font-mono text-xs text-muted-foreground tabular-nums">
                     {fmtTime(l.created_at)}
                   </TableCell>
                   <TableCell>{l.proxy_key_name ?? '—'}</TableCell>
@@ -278,17 +305,22 @@ export default function DashboardPage() {
                   <TableCell>{l.upstream_key_nickname ?? '—'}</TableCell>
                   <TableCell>
                     {l.success ? (
-                      <Badge variant="default">成功</Badge>
+                      <Badge
+                        variant="outline"
+                        className="border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
+                      >
+                        成功
+                      </Badge>
                     ) : (
                       <span title={l.error ?? ''}>
                         <Badge variant="destructive">失败</Badge>
                       </span>
                     )}
                   </TableCell>
-                  <TableCell className="text-right">{l.credits}</TableCell>
-                  <TableCell className="text-right text-neutral-500">{l.duration_ms} ms</TableCell>
+                  <TableCell className="text-right tabular-nums">{l.credits}</TableCell>
+                  <TableCell className="text-right text-muted-foreground tabular-nums">{l.duration_ms} ms</TableCell>
                   <TableCell
-                    className="max-w-48 truncate text-neutral-500"
+                    className="max-w-48 truncate text-muted-foreground"
                     title={l.params_summary ?? ''}
                   >
                     {l.params_summary ?? '—'}
@@ -297,8 +329,9 @@ export default function DashboardPage() {
               ))}
               {logs.items.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={8} className="text-center text-neutral-500 py-8">
-                    暂无日志
+                  <TableCell colSpan={8} className="text-center text-muted-foreground py-10">
+                    <PackageOpen className="mx-auto size-6 mb-2 opacity-60" />
+                    暂无日志，发起一次搜索后这里会显示记录
                   </TableCell>
                 </TableRow>
               )}
@@ -310,13 +343,11 @@ export default function DashboardPage() {
   )
 }
 
-function StatCard({ label, value }: { label: string; value: React.ReactNode }) {
+function StatCell({ label, value }: { label: string; value: React.ReactNode }) {
   return (
-    <Card>
-      <CardContent className="pt-6">
-        <p className="text-sm text-neutral-500">{label}</p>
-        <p className="text-2xl font-semibold mt-1">{value}</p>
-      </CardContent>
-    </Card>
+    <div className="px-4 py-5">
+      <p className="text-xs text-muted-foreground">{label}</p>
+      <p className="mt-1 text-2xl font-semibold tabular-nums">{value}</p>
+    </div>
   )
 }

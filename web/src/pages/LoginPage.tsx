@@ -1,9 +1,11 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { ShieldCheck } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { ThemeToggle } from '@/components/ThemeToggle'
 import { api } from '@/lib/api'
 
 export default function LoginPage() {
@@ -27,11 +29,17 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-neutral-50 p-4">
+    <div className="min-h-screen flex items-center justify-center bg-background p-4 relative">
+      <div className="absolute top-4 right-4">
+        <ThemeToggle />
+      </div>
       <Card className="w-full max-w-sm">
         <CardHeader>
-          <CardTitle>登录 tavily-proxy</CardTitle>
-          <CardDescription>使用你的账号登录管理界面</CardDescription>
+          <div className="flex items-center gap-2 mb-1">
+            <ShieldCheck className="size-5 text-primary" />
+            <CardTitle>登录 tavily-proxy</CardTitle>
+          </div>
+          <CardDescription>使用你的账号登录密钥池管理控制台</CardDescription>
         </CardHeader>
         <CardContent>
           <form onSubmit={submit} className="space-y-4">
@@ -43,7 +51,7 @@ export default function LoginPage() {
               <Label htmlFor="password">密码</Label>
               <Input id="password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" />
             </div>
-            {error && <p className="text-sm text-red-600">{error}</p>}
+            {error && <p className="text-sm text-destructive">{error}</p>}
             <Button type="submit" className="w-full" disabled={busy}>
               {busy ? '登录中…' : '登录'}
             </Button>

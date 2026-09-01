@@ -1,9 +1,11 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { ShieldCheck } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { ThemeToggle } from '@/components/ThemeToggle'
 import { api } from '@/lib/api'
 
 export default function SetupPage() {
@@ -33,10 +35,16 @@ export default function SetupPage() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-neutral-50 p-4">
+    <div className="min-h-screen flex items-center justify-center bg-background p-4 relative">
+      <div className="absolute top-4 right-4">
+        <ThemeToggle />
+      </div>
       <Card className="w-full max-w-sm">
         <CardHeader>
-          <CardTitle>欢迎使用 tavily-proxy</CardTitle>
+          <div className="flex items-center gap-2 mb-1">
+            <ShieldCheck className="size-5 text-primary" />
+            <CardTitle>欢迎使用 tavily-proxy</CardTitle>
+          </div>
           <CardDescription>首次使用，请创建你的账号。账号创建后本页将永久关闭。</CardDescription>
         </CardHeader>
         <CardContent>
@@ -48,9 +56,9 @@ export default function SetupPage() {
             <div className="space-y-2">
               <Label htmlFor="password">密码</Label>
               <Input id="password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="new-password" />
-              <p className="text-xs text-neutral-500">至少 8 位</p>
+              <p className="text-xs text-muted-foreground">至少 8 位</p>
             </div>
-            {error && <p className="text-sm text-red-600">{error}</p>}
+            {error && <p className="text-sm text-destructive">{error}</p>}
             <Button type="submit" className="w-full" disabled={busy}>
               {busy ? '创建中…' : '创建账号'}
             </Button>

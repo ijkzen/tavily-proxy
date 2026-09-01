@@ -49,10 +49,10 @@ export default function SettingsPage() {
             <div className="space-y-2">
               <Label htmlFor="new">新密码</Label>
               <Input id="new" type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} autoComplete="new-password" />
-              <p className="text-xs text-neutral-500">至少 8 位</p>
+              <p className="text-xs text-muted-foreground">至少 8 位</p>
             </div>
-            {error && <p className="text-sm text-red-600">{error}</p>}
-            {message && <p className="text-sm text-green-600">{message}</p>}
+            {error && <p className="text-sm text-destructive">{error}</p>}
+            {message && <p className="text-sm text-emerald-600 dark:text-emerald-400">{message}</p>}
             <Button type="submit" disabled={busy}>{busy ? '提交中…' : '修改密码'}</Button>
           </form>
         </CardContent>

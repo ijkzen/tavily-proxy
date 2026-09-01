@@ -53,7 +53,7 @@ function ActionButtons({
       <button
         type="button"
         title={secret.visible ? '隐藏明文' : '显示明文'}
-        className="p-1 rounded hover:bg-neutral-100 text-neutral-500"
+        className="p-1 rounded hover:bg-muted text-muted-foreground transition-colors"
         onClick={secret.toggle}
       >
         {secret.visible ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
@@ -61,7 +61,7 @@ function ActionButtons({
       <button
         type="button"
         title="复制"
-        className="p-1 rounded hover:bg-neutral-100 text-neutral-500"
+        className="p-1 rounded hover:bg-muted text-muted-foreground transition-colors"
         onClick={async () => {
           if (await secret.copy(copyBuild)) {
             setCopied(true)
@@ -78,11 +78,11 @@ function ActionButtons({
 /** 密钥展示行（展示组件，状态由调用方的 useSecret 提供，可与 MCP 链接行共享）。 */
 export function SecretLine({ secret, masked }: { secret: Secret; masked: string }) {
   if (secret.unavailable) {
-    return <span className="text-neutral-400 text-xs">{masked}（旧密钥无明文，吊销重建后可启用）</span>
+    return <span className="text-muted-foreground text-xs">{masked}（旧密钥无明文，吊销重建后可启用）</span>
   }
   return (
     <span className="flex items-center gap-1">
-      <code className="font-mono text-sm text-neutral-600 break-all">
+      <code className="font-mono text-sm text-foreground/80 break-all">
         {secret.visible && secret.plain !== null ? secret.plain : masked}
       </code>
       <ActionButtons secret={secret} />
@@ -106,12 +106,12 @@ export function McpLinkLine({ secret }: { secret: Secret }) {
       ? `${origin}/mcp?key=${secret.plain}`
       : `${origin}/mcp?key=tp-••••`
   return (
-    <div className="mt-1.5 rounded-md bg-neutral-100 px-2.5 py-1.5 whitespace-normal">
-      <div className="flex items-center justify-between gap-2">
-        <span className="text-xs text-neutral-400 shrink-0">MCP 集成链接</span>
+    <div className="mt-1.5 rounded-lg border border-border bg-muted/50 px-2.5 py-2 whitespace-normal">
+      <div className="flex items-center justify-between gap-2 mb-1">
+        <span className="text-xs text-muted-foreground shrink-0">MCP 集成链接</span>
         <ActionButtons secret={secret} copyBuild={(p) => `${origin}/mcp?key=${p}`} />
       </div>
-      <code className="block font-mono text-xs text-neutral-600 break-all select-all">
+      <code className="block font-mono text-xs text-foreground/80 break-all select-all">
         {shown}
       </code>
     </div>

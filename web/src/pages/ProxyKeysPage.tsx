@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { KeyRound, Plus } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -35,7 +36,7 @@ function ProxyKeyRow({ k, onRevoke }: { k: ProxyKey; onRevoke: (id: number) => v
         </div>
       </TableCell>
       <TableCell>{k.total_credits} credits</TableCell>
-      <TableCell className="text-neutral-500">{formatTime(k.last_used_at)}</TableCell>
+      <TableCell className="text-muted-foreground tabular-nums">{formatTime(k.last_used_at)}</TableCell>
       <TableCell className="text-right">
         <Button variant="destructive" size="sm" onClick={() => onRevoke(k.id)}>删除</Button>
       </TableCell>
@@ -99,13 +100,16 @@ export default function ProxyKeysPage() {
               <Label htmlFor="name">名称</Label>
               <Input id="name" value={name} onChange={(e) => setName(e.target.value)} placeholder="例如：笔记本 Claude Code" />
             </div>
-            <Button type="submit" disabled={busy}>{busy ? '签发中…' : '签发'}</Button>
+            <Button type="submit" disabled={busy}>
+              <Plus className="size-4" />
+              {busy ? '签发中…' : '签发'}
+            </Button>
           </form>
-          {error && <p className="text-sm text-red-600 mt-3">{error}</p>}
+          {error && <p className="text-sm text-red-600 dark:text-red-400 mt-3">{error}</p>}
           {justCreated && (
-            <div className="mt-4 rounded-md border border-amber-300 bg-amber-50 p-3">
-              <p className="text-sm font-medium text-amber-800 mb-1">新密钥（也可稍后在列表中随时查看）：</p>
-              <code className="text-sm break-all select-all">{justCreated}</code>
+            <div className="mt-4 rounded-lg border border-primary/30 bg-primary/5 p-4">
+              <p className="text-sm font-medium text-primary mb-1.5">新密钥（也可稍后在列表中随时查看）：</p>
+              <code className="font-mono text-sm break-all select-all">{justCreated}</code>
             </div>
           )}
         </CardContent>
@@ -132,7 +136,8 @@ export default function ProxyKeysPage() {
               ))}
               {keys.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={5} className="text-center text-neutral-500 py-8">
+                  <TableCell colSpan={5} className="text-center text-muted-foreground py-8">
+                    <KeyRound className="mx-auto size-6 mb-2 opacity-60" />
                     还没有代理密钥，签发一个给 MCP 客户端用
                   </TableCell>
                 </TableRow>
