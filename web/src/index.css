@@ -135,17 +135,23 @@
     font-variant-numeric: tabular-nums;
   }
 
-  /* 主题切换过渡：View Transitions API 十字淡入；尊重减少动态偏好 */
-  ::view-transition-old(root),
-  ::view-transition-new(root) {
+  /* 主题切换过渡：View Transitions API 淡入。
+   * old(root) 保持不透明（不淡出），new(root) 淡入覆盖其上——中间无透底窗口，避免闪白。
+   * mix-blend-mode: normal 避免新旧快照 cross-fade 混色（发白）。 */
+  ::view-transition-old(root) {
     animation: none;
     mix-blend-mode: normal;
   }
-  ::view-transition-old(root) {
-    animation: theme-fade 200ms ease-in;
-  }
   ::view-transition-new(root) {
-    animation: theme-fade 200ms ease-out;
+    animation: theme-in 220ms ease-out;
+    mix-blend-mode: normal;
+  }
+  /* 切换期间临时禁用元素自身的 CSS transition（button/card hover 等），
+   * 避免与 view transition 并发导致元素闪烁（Astro #8711 / next-themes 解法）。 */
+  html.theme-transition *,
+  html.theme-transition *::before,
+  html.theme-transition *::after {
+    transition: none !important;
   }
   @media (prefers-reduced-motion: reduce) {
     ::view-transition-old(root),
@@ -153,8 +159,8 @@
       animation-duration: 0.01ms;
     }
   }
-  @keyframes theme-fade {
-    from { opacity: 1; }
-    to { opacity: 0; }
+  @keyframes theme-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
   }
 }

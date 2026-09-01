@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { flushSync } from 'react-dom'
 import { Monitor, Moon, Sun } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 
@@ -33,15 +34,24 @@ export function ThemeToggle({ className }: { className?: string }) {
 
   function toggle() {
     const next = NEXT[theme]
+    // 切换期间临时禁用元素自身过渡，避免与 view transition 并发闪烁
+    document.documentElement.classList.add('theme-transition')
     // View Transitions API：主题切换带淡入过渡；不支持时直接应用
+    const done = () => document.documentElement.classList.remove('theme-transition')
     if (document.startViewTransition) {
-      document.startViewTransition(() => {
+      const transition = document.startViewTransition(() => {
+        flushSync(() => {
+          apply(next)
+          setTheme(next)
+        })
+      })
+      void transition.finished.finally(done)
+    } else {
+      flushSync(() => {
         apply(next)
         setTheme(next)
       })
-    } else {
-      apply(next)
-      setTheme(next)
+      done()
     }
   }
 
