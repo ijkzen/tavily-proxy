@@ -51,7 +51,7 @@ interface Alert {
   created_at: number
 }
 
-const TOOLS = ['tavily_search', 'tavily_extract', 'tavily_crawl', 'tavily_map', 'tavily_research']
+const TOOLS = ['tavily_search', 'tavily_extract']
 
 function fmtTime(unixSecs: number | null): string {
   if (!unixSecs) return '—'

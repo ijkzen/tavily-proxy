@@ -1,4 +1,6 @@
 //! MCP Streamable HTTP 端点（ADR-0001）：自实现的 JSON-RPC over HTTP 表面。
+//! 对外只暴露 `tavily_search` 与 `tavily_extract` 两个工具；crawl/map/research 的上游转发
+//! 与轮询编排（balancer.rs / research.rs）保留，但不向 MCP 客户端暴露。
 //! 无状态：不签发 Mcp-Session-Id，响应一律 application/json（spec 允许的非流式形态）。
 //! 鉴权：代理密钥，`Authorization: Bearer tp-…` 或 `?key=tp-…`。
 
@@ -13,7 +15,7 @@ use serde_json::{Value, json};
 use std::time::Instant;
 
 use crate::app::AppState;
-use crate::{balancer, proxy_keys, request_logs, research};
+use crate::{balancer, proxy_keys, request_logs};
 
 pub fn router(state: AppState) -> Router<AppState> {
     Router::new()
@@ -194,59 +196,6 @@ fn tools() -> Vec<Value> {
                 "required": ["urls"]
             }
         }),
-        json!({
-            "name": "tavily_crawl",
-            "description": "Crawl a website starting from a URL, extracting content from pages with configurable depth and breadth.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "url": {"type": "string", "description": "The root URL to begin the crawl"},
-                    "max_depth": {"type": "integer", "minimum": 1, "default": 1},
-                    "max_breadth": {"type": "integer", "minimum": 1, "default": 20},
-                    "limit": {"type": "integer", "minimum": 1, "default": 50},
-                    "instructions": {"type": "string", "description": "Natural language instructions for the crawler"},
-                    "select_paths": string_array,
-                    "select_domains": string_array,
-                    "allow_external": {"type": "boolean", "default": true},
-                    "extract_depth": extract_depth,
-                    "format": format_enum,
-                    "include_favicon": {"type": "boolean", "default": false}
-                },
-                "required": ["url"]
-            }
-        }),
-        json!({
-            "name": "tavily_map",
-            "description": "Map a website's structure. Returns a list of URLs found starting from the base URL.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "url": {"type": "string", "description": "The root URL to begin the mapping"},
-                    "max_depth": {"type": "integer", "minimum": 1, "default": 1},
-                    "max_breadth": {"type": "integer", "minimum": 1, "default": 20},
-                    "limit": {"type": "integer", "minimum": 1, "default": 50},
-                    "instructions": {"type": "string"},
-                    "select_paths": string_array,
-                    "select_domains": string_array,
-                    "allow_external": {"type": "boolean", "default": true}
-                },
-                "required": ["url"]
-            }
-        }),
-        json!({
-            "name": "tavily_research",
-            "description": "Performs comprehensive research on a given topic using multiple sources. Returns a detailed report. This is a long-running operation that waits for completion.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "input": {"type": "string", "description": "The research task or question"},
-                    "model": {"type": "string", "enum": ["mini", "pro", "auto"], "default": "auto"},
-                    "instructions": {"type": "string", "description": "Custom instructions for the research agent"},
-                    "output_schema": {"type": "object", "description": "JSON schema the report should conform to"}
-                },
-                "required": ["input"]
-            }
-        }),
     ]
 }
 
@@ -257,63 +206,13 @@ async fn call_tool(
     name: &str,
     arguments: Value,
 ) -> Response {
-    if name == "tavily_research" {
-        return call_research_tool(state, proxy_key_id, id, arguments).await;
-    }
     // 同步工具：名称 → 上游 REST 路径
     let path = match name {
         "tavily_search" => "/search",
         "tavily_extract" => "/extract",
-        "tavily_crawl" => "/crawl",
-        "tavily_map" => "/map",
         _ => return tool_error(id, format!("未知工具: {name}")),
     };
     call_sync_tool(state, proxy_key_id, id, name, path, arguments).await
-}
-
-/// tavily_research：提交 + 同步轮询编排（research.rs）。
-async fn call_research_tool(
-    state: &AppState,
-    proxy_key_id: i64,
-    id: Value,
-    arguments: Value,
-) -> Response {
-    let log = ToolLog::start(proxy_key_id, "tavily_research", &arguments);
-    match research::run(state, proxy_key_id, arguments).await {
-        research::ResearchOutcome::Completed {
-            payload,
-            credits,
-            upstream_key_id,
-        } => {
-            log.finish(state, Some(upstream_key_id), credits, true, None)
-                .await;
-            tool_success(id, &payload)
-        }
-        research::ResearchOutcome::SubmitPassthrough {
-            status,
-            payload,
-            upstream_key_id,
-        } => {
-            let msg = format!("上游错误 {status}: {}", upstream_error_message(&payload));
-            log.finish(state, Some(upstream_key_id), 0, false, Some(msg.clone()))
-                .await;
-            tool_error(id, msg)
-        }
-        research::ResearchOutcome::Failed {
-            message,
-            upstream_key_id,
-        } => {
-            log.finish(state, upstream_key_id, 0, false, Some(message.clone()))
-                .await;
-            tool_error(id, message)
-        }
-        research::ResearchOutcome::AllUnavailable => {
-            let msg = "所有上游密钥暂不可用（限流/耗尽/已禁用），请稍后重试或检查密钥池";
-            log.finish(state, None, 0, false, Some(msg.to_owned()))
-                .await;
-            tool_error(id, msg)
-        }
-    }
 }
 
 /// 同步工具通用管道：注入 include_usage → 选路器+状态机 → 记账/透传 → 落日志。

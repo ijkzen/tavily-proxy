@@ -7,3 +7,5 @@
 **代价**：我们需要自行维护与官方一致的 5 个工具表面（tavily_search/extract/crawl/map/research）及错误映射（429 冷却 / 432·433 耗尽 / 401 禁用 / 400 透传），上游 API 变更时要跟进。
 
 **修订（2026-08-27）**：最终未使用 `rmcp` 与 `tower-sessions`。MCP Streamable HTTP 的无状态形态（POST /mcp + application/json 响应，无 Mcp-Session-Id）很小，手写 JSON-RPC 分发（src/mcp.rs）比引入 rmcp 更直接；会话同理用手签 cookie + SHA-256 哈希存库（src/auth.rs）。spec 中技术栈一栏的 rmcp/tower-sessions 相应作废。
+
+**修订（2026-09-01）**：MCP 对外表面收敛为 `tavily_search` / `tavily_extract` 两个工具，crawl/map/research 不再向 MCP 客户端暴露（tools/list 不列出、tools/call 返回未知工具），仅保留其上游转发/编排代码（balancer.rs / research.rs）备内部使用。

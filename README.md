@@ -3,12 +3,13 @@
 [![CI](https://github.com/ijkzen/tavily-proxy/actions/workflows/ci.yml/badge.svg)](https://github.com/ijkzen/tavily-proxy/actions/workflows/ci.yml)
 
 把 Tavily 官方的 [远程 MCP 服务器](https://docs.tavily.com/mcp-server) 变成**自托管版本**：
-你自己持有上游密钥池，通过统一的 MCP 端点向外提供 `tavily_search` 等工具，并在多个上游
-密钥之间自动选路、限流冷却、额度耗尽切换与请求日志统计。
+你自己持有上游密钥池，通过统一的 MCP 端点向外提供 `tavily_search` / `tavily_extract`
+两个工具（其余上游能力如 crawl/map/research 不对外暴露），并在多个上游密钥之间自动选路、
+限流冷却、额度耗尽切换与请求日志统计。
 
 ## 功能特性
 
-- **MCP 端点**：`POST /mcp`（Streamable HTTP），工具名称与参数和官方完全一致，MCP 客户端可零改动接入
+- **MCP 端点**：`POST /mcp`（Streamable HTTP），只暴露 `tavily_search` 与 `tavily_extract`，参数与官方完全一致，MCP 客户端可零改动接入
 - **密钥池**：多个 Tavily 官方密钥（`tvly-...`）统一管理，额度感知选路（有效剩余 credits 最多优先）
 - **状态机**：每个上游密钥有 冷却（429 短暂移出）/ 耗尽（432/433 到周期重置）/ 禁用（401 或手动停用）三种健康状态
 - **代理密钥**：自签 `tp-...` 密钥，可随时吊销；上游密钥密文存储（AES-GCM）
@@ -105,8 +106,8 @@ docker compose up -d
 | `TAVILY_BASE_URL` | `https://api.tavily.com` | 上游 REST 地址（测试可指向本地 mock） |
 | `QUOTA_POLL_INTERVAL_SECS` | `60` | 额度轮询间隔 |
 | `COOLDOWN_SECS` | `60` | 429 冷却时长 |
-| `RESEARCH_TIMEOUT_SECS` | `600` | `tavily_research` 总超时 |
-| `RESEARCH_POLL_INTERVAL_MS` | `2000` | research 任务轮询间隔 |
+| `RESEARCH_TIMEOUT_SECS` | `600` | 内部 research 任务总超时（未对外暴露） |
+| `RESEARCH_POLL_INTERVAL_MS` | `2000` | 内部 research 任务轮询间隔 |
 | `LOG_RETENTION_DAYS` | `30` | 请求日志保留天数 |
 
 ## 测试
