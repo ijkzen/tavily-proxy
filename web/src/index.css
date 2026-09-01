@@ -134,4 +134,27 @@
   .tabular-nums {
     font-variant-numeric: tabular-nums;
   }
+
+  /* 主题切换过渡：View Transitions API 十字淡入；尊重减少动态偏好 */
+  ::view-transition-old(root),
+  ::view-transition-new(root) {
+    animation: none;
+    mix-blend-mode: normal;
+  }
+  ::view-transition-old(root) {
+    animation: theme-fade 200ms ease-in;
+  }
+  ::view-transition-new(root) {
+    animation: theme-fade 200ms ease-out;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    ::view-transition-old(root),
+    ::view-transition-new(root) {
+      animation-duration: 0.01ms;
+    }
+  }
+  @keyframes theme-fade {
+    from { opacity: 1; }
+    to { opacity: 0; }
+  }
 }

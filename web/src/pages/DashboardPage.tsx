@@ -92,8 +92,8 @@ export default function DashboardPage() {
   }, [filterProxyKey, filterTool, filterSuccess])
 
   useEffect(() => {
-    refresh()
-    const timer = setInterval(refresh, 15000)
+    void Promise.resolve().then(refresh)
+    const timer = setInterval(() => void Promise.resolve().then(refresh), 15000)
     return () => clearInterval(timer)
   }, [refresh])
 

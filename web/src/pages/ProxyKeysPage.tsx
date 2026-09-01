@@ -6,7 +6,8 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Layout } from '@/components/Layout'
-import { McpLinkLine, SecretLine, useSecret } from '@/components/Secret'
+import { McpLinkLine, SecretLine } from '@/components/Secret'
+import { useSecret } from '@/lib/use-secret'
 import { api } from '@/lib/api'
 
 interface ProxyKey {
@@ -57,7 +58,7 @@ export default function ProxyKeysPage() {
   }
 
   useEffect(() => {
-    refresh()
+    void Promise.resolve().then(refresh)
   }, [])
 
   async function create(e: React.FormEvent) {

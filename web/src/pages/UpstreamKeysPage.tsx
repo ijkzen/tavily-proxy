@@ -25,7 +25,7 @@ export default function UpstreamKeysPage() {
   }
 
   useEffect(() => {
-    refresh()
+    void Promise.resolve().then(refresh)
   }, [])
 
   async function add(e: React.FormEvent) {
