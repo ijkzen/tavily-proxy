@@ -59,7 +59,10 @@ async fn extract_passthrough_and_tools_list() {
     let result = &body["result"];
     assert_ne!(result["isError"], true, "tavily_extract 不应报错: {result}");
     let text = result["content"][0]["text"].as_str().unwrap();
-    assert!(text.contains("extracted"), "extract 结果应包含 extracted: {text}");
+    assert!(
+        text.contains("extracted"),
+        "extract 结果应包含 extracted: {text}"
+    );
 
     // 已隐藏工具调用应返回未知工具错误
     for hidden in ["tavily_crawl", "tavily_map", "tavily_research"] {
@@ -71,10 +74,7 @@ async fn extract_passthrough_and_tools_list() {
             json!({"url": "https://example.com"}),
         )
         .await;
-        assert_eq!(
-            body["result"]["isError"], true,
-            "{hidden} 应被拒绝: {body}"
-        );
+        assert_eq!(body["result"]["isError"], true, "{hidden} 应被拒绝: {body}");
     }
 }
 
