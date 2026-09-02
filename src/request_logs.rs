@@ -23,6 +23,10 @@ pub struct NewLog {
     pub proxy_key_id: i64,
     pub tool: String,
     pub params_summary: String,
+    /// 完整请求参数（JSON 文本），明细弹窗展示用。
+    pub params_json: String,
+    /// 完整上游响应体（JSON 文本），明细弹窗展示用；失败时为 None。
+    pub response_json: Option<String>,
     pub upstream_key_id: Option<i64>,
     pub credits: i64,
     pub duration_ms: i64,
@@ -33,12 +37,15 @@ pub struct NewLog {
 pub async fn record(db: &SqlitePool, log: NewLog) {
     let _ = sqlx::query(
         "INSERT INTO request_logs \
-         (proxy_key_id, tool, params_summary, upstream_key_id, credits, duration_ms, success, error, created_at) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+         (proxy_key_id, tool, params_summary, params_json, response_json, upstream_key_id, \
+          credits, duration_ms, success, error, created_at) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(log.proxy_key_id)
     .bind(log.tool)
     .bind(log.params_summary)
+    .bind(log.params_json)
+    .bind(log.response_json)
     .bind(log.upstream_key_id)
     .bind(log.credits)
     .bind(log.duration_ms)
@@ -73,6 +80,8 @@ pub fn summarize_params(arguments: &Value) -> String {
 struct LogsQuery {
     proxy_key_id: Option<i64>,
     tool: Option<String>,
+    /// 上游密钥提供商过滤：tavily / exa
+    kind: Option<String>,
     success: Option<bool>,
     limit: Option<i64>,
     offset: Option<i64>,
@@ -85,8 +94,11 @@ struct LogRow {
     proxy_key_name: Option<String>,
     tool: String,
     params_summary: Option<String>,
+    params_json: Option<String>,
+    response_json: Option<String>,
     upstream_key_id: Option<i64>,
     upstream_key_nickname: Option<String>,
+    upstream_key_kind: Option<String>,
     credits: i64,
     duration_ms: i64,
     success: i64,
@@ -101,8 +113,11 @@ fn log_to_json(row: LogRow) -> Value {
         "proxy_key_name": row.proxy_key_name,
         "tool": row.tool,
         "params_summary": row.params_summary,
+        "params_json": row.params_json,
+        "response_json": row.response_json,
         "upstream_key_id": row.upstream_key_id,
         "upstream_key_nickname": row.upstream_key_nickname,
+        "upstream_key_kind": row.upstream_key_kind,
         "credits": row.credits,
         "duration_ms": row.duration_ms,
         "success": row.success != 0,
@@ -126,17 +141,26 @@ async fn list_logs(
     if q.tool.is_some() {
         cond.push_str(" AND l.tool = ?");
     }
+    if q.kind.is_some() {
+        cond.push_str(" AND uk.kind = ?");
+    }
     if q.success.is_some() {
         cond.push_str(" AND l.success = ?");
     }
 
-    let count_sql = format!("SELECT COUNT(*) FROM request_logs l {cond}");
+    let count_sql = format!(
+        "SELECT COUNT(*) FROM request_logs l \
+         LEFT JOIN upstream_keys uk ON uk.id = l.upstream_key_id {cond}"
+    );
     let mut count_q = sqlx::query_scalar::<_, i64>(&count_sql);
     if let Some(id) = q.proxy_key_id {
         count_q = count_q.bind(id);
     }
     if let Some(tool) = &q.tool {
         count_q = count_q.bind(tool.clone());
+    }
+    if let Some(kind) = &q.kind {
+        count_q = count_q.bind(kind.clone());
     }
     if let Some(success) = q.success {
         count_q = count_q.bind(success);
@@ -148,8 +172,9 @@ async fn list_logs(
 
     let items_sql = format!(
         "SELECT l.id, l.proxy_key_id, pk.name AS proxy_key_name, l.tool, l.params_summary, \
-         l.upstream_key_id, uk.nickname AS upstream_key_nickname, l.credits, l.duration_ms, \
-         l.success, l.error, l.created_at \
+         l.params_json, l.response_json, l.upstream_key_id, \
+         uk.nickname AS upstream_key_nickname, uk.kind AS upstream_key_kind, \
+         l.credits, l.duration_ms, l.success, l.error, l.created_at \
          FROM request_logs l \
          LEFT JOIN proxy_keys pk ON pk.id = l.proxy_key_id \
          LEFT JOIN upstream_keys uk ON uk.id = l.upstream_key_id \
@@ -161,6 +186,9 @@ async fn list_logs(
     }
     if let Some(tool) = &q.tool {
         items_q = items_q.bind(tool.clone());
+    }
+    if let Some(kind) = &q.kind {
+        items_q = items_q.bind(kind.clone());
     }
     if let Some(success) = q.success {
         items_q = items_q.bind(success);

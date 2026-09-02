@@ -5,8 +5,16 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Layout } from '@/components/Layout'
+import LogDetailDialog, { type LogDetail } from '@/components/LogDetailDialog'
 import { api } from '@/lib/api'
-import { STATUS_LABEL, STATUS_VARIANT, type UpstreamKey } from '@/lib/upstream-keys'
+import {
+  KIND_LABEL,
+  STATUS_LABEL,
+  STATUS_VARIANT,
+  fmtUsage,
+  remaining,
+  type UpstreamKey,
+} from '@/lib/upstream-keys'
 import { cn } from '@/lib/utils'
 
 interface ProxyKey {
@@ -31,8 +39,11 @@ interface LogEntry {
   proxy_key_name: string | null
   tool: string
   params_summary: string | null
+  params_json: string | null
+  response_json: string | null
   upstream_key_id: number | null
   upstream_key_nickname: string | null
+  upstream_key_kind: 'tavily' | 'exa' | null
   credits: number
   duration_ms: number
   success: boolean
@@ -54,6 +65,7 @@ interface Alert {
 }
 
 const TOOLS = ['tavily_search', 'tavily_extract']
+const PAGE_SIZES = [10, 20, 30, 40, 50]
 
 function fmtTime(unixSecs: number | null): string {
   if (!unixSecs) return '—'
@@ -68,13 +80,24 @@ export default function DashboardPage() {
   const [logs, setLogs] = useState<LogsResponse>({ total: 0, items: [] })
   const [filterProxyKey, setFilterProxyKey] = useState('')
   const [filterTool, setFilterTool] = useState('')
+  const [filterKind, setFilterKind] = useState('')
   const [filterSuccess, setFilterSuccess] = useState('')
+  const [page, setPage] = useState(1)
+  // 分页大小持久化到 localStorage：刷新后保持用户选择（10~50 步进 10，非法值回退 20）
+  const [pageSize, setPageSize] = useState(() => {
+    const saved = Number(localStorage.getItem('logPageSize'))
+    return PAGE_SIZES.includes(saved) ? saved : 20
+  })
+  const [detail, setDetail] = useState<LogDetail | null>(null)
 
   const refresh = useCallback(async () => {
     const params = new URLSearchParams()
     if (filterProxyKey) params.set('proxy_key_id', filterProxyKey)
     if (filterTool) params.set('tool', filterTool)
+    if (filterKind) params.set('kind', filterKind)
     if (filterSuccess) params.set('success', filterSuccess)
+    params.set('limit', String(pageSize))
+    params.set('offset', String((page - 1) * pageSize))
     const qs = params.size > 0 ? `?${params.toString()}` : ''
 
     const [uk, pk, st, lg, al] = await Promise.all([
@@ -89,13 +112,15 @@ export default function DashboardPage() {
     if (st.ok && st.data) setStats(st.data)
     if (lg.ok && lg.data) setLogs(lg.data)
     if (al.ok && al.data) setAlerts(al.data)
-  }, [filterProxyKey, filterTool, filterSuccess])
+  }, [filterProxyKey, filterTool, filterKind, filterSuccess, page, pageSize])
 
   useEffect(() => {
     void Promise.resolve().then(refresh)
     const timer = setInterval(() => void Promise.resolve().then(refresh), 15000)
     return () => clearInterval(timer)
   }, [refresh])
+
+  const totalPages = Math.max(1, Math.ceil(logs.total / pageSize))
 
   const selectClass =
     'h-9 rounded-md border border-input bg-card px-2 text-sm shadow-sm focus:outline-none focus:ring-1 focus:ring-ring'
@@ -104,9 +129,16 @@ export default function DashboardPage() {
   const coolingCount = upstreamKeys.filter((k) => k.status === 'cooling').length
   const exhaustedCount = upstreamKeys.filter((k) => k.status === 'exhausted').length
 
+  // 按提供商分组，组内按剩余额度降序排名（tavily credits / exa 美元）
+  const groups: { kind: 'tavily' | 'exa'; label: string; unit: string; keys: UpstreamKey[] }[] = [
+    { kind: 'tavily', label: 'Tavily', unit: 'credits', keys: upstreamKeys.filter((k) => k.kind === 'tavily') },
+    { kind: 'exa', label: 'Exa', unit: '美元', keys: upstreamKeys.filter((k) => k.kind === 'exa') },
+  ]
+  for (const g of groups) g.keys.sort((a, b) => remaining(b) - remaining(a))
+
   return (
     <Layout title="看板">
-      {/* 密钥池签名卡：额度感知选路的健康总览 */}
+      {/* 密钥池签名卡：按提供商分组 + 组内剩余额度排名 */}
       <Card className="mb-6">
         <CardHeader>
           <div className="flex items-center justify-between">
@@ -121,37 +153,53 @@ export default function DashboardPage() {
             </span>
           </div>
         </CardHeader>
-        <CardContent className="space-y-4">
-          {upstreamKeys.map((k) => {
-            const pct = k.limit ? Math.min(100, (k.usage / k.limit) * 100) : null
-            return (
-              <div key={k.id} className="space-y-1.5">
-                <div className="flex items-center justify-between gap-4 text-sm">
-                  <div className="flex items-center gap-2">
-                    <span className="font-medium">{k.nickname}</span>
-                    <Badge variant={STATUS_VARIANT[k.status]}>{STATUS_LABEL[k.status]}</Badge>
+        <CardContent className="space-y-6">
+          {groups.map((g) => (
+            <div key={g.kind} className="space-y-1.5">
+              <p className="text-xs font-medium text-muted-foreground">
+                {g.label} · 剩余{g.unit}排名
+              </p>
+              {g.keys.map((k) => {
+                const pct = k.limit ? Math.min(100, (k.usage / k.limit) * 100) : null
+                return (
+                  <div key={k.id} className="space-y-1.5">
+                    <div className="flex items-center justify-between gap-4 text-sm">
+                      <div className="flex items-center gap-2">
+                        <Badge variant="outline" className={k.kind === 'exa' ? 'border-violet-500/40 text-violet-600 dark:text-violet-400' : ''}>
+                          {KIND_LABEL[k.kind]}
+                        </Badge>
+                        <span className="font-medium">{k.nickname}</span>
+                        <Badge variant={STATUS_VARIANT[k.status]}>{STATUS_LABEL[k.status]}</Badge>
+                      </div>
+                      <span className="font-mono text-xs text-muted-foreground tabular-nums whitespace-nowrap">
+                        {k.limit === null
+                          ? `${fmtUsage(k.usage)} / 未知`
+                          : `${fmtUsage(k.usage)} / ${fmtUsage(k.limit)}${k.kind === 'exa' ? ' 美元' : ''}`}
+                        <span className="mx-1 text-border">·</span>
+                        {k.kind === 'exa' ? '每月 1 日重置' : `每月 ${k.reset_day} 日重置`}
+                      </span>
+                    </div>
+                    <div className="h-2 rounded-full bg-muted overflow-hidden">
+                      <div
+                        className={cn(
+                          'h-full rounded-full transition-all',
+                          pct !== null && pct > 90
+                            ? 'bg-red-500'
+                            : pct !== null && pct > 70
+                              ? 'bg-amber-500'
+                              : 'bg-emerald-500'
+                        )}
+                        style={{ width: `${pct ?? 0}%` }}
+                      />
+                    </div>
                   </div>
-                  <span className="font-mono text-xs text-muted-foreground tabular-nums whitespace-nowrap">
-                    {k.limit === null ? `${k.usage} / 未知` : `${k.usage} / ${k.limit}`}
-                    <span className="mx-1 text-border">·</span>每月 {k.reset_day} 日重置
-                  </span>
-                </div>
-                <div className="h-2 rounded-full bg-muted overflow-hidden">
-                  <div
-                    className={cn(
-                      'h-full rounded-full transition-all',
-                      pct !== null && pct > 90
-                        ? 'bg-red-500'
-                        : pct !== null && pct > 70
-                          ? 'bg-amber-500'
-                          : 'bg-emerald-500'
-                    )}
-                    style={{ width: `${pct ?? 0}%` }}
-                  />
-                </div>
-              </div>
-            )
-          })}
+                )
+              })}
+              {g.keys.length === 0 && (
+                <p className="text-sm text-muted-foreground py-1">还没有 {g.label} 密钥</p>
+              )}
+            </div>
+          ))}
           {upstreamKeys.length === 0 && (
             <div className="flex flex-col items-center gap-2 py-6 text-muted-foreground">
               <KeyRound className="size-6" />
@@ -254,7 +302,10 @@ export default function DashboardPage() {
             <select
               className={selectClass}
               value={filterProxyKey}
-              onChange={(e) => setFilterProxyKey(e.target.value)}
+              onChange={(e) => {
+                setFilterProxyKey(e.target.value)
+                setPage(1)
+              }}
             >
               <option value="">全部代理密钥</option>
               {proxyKeys.map((k) => (
@@ -264,7 +315,10 @@ export default function DashboardPage() {
             <select
               className={selectClass}
               value={filterTool}
-              onChange={(e) => setFilterTool(e.target.value)}
+              onChange={(e) => {
+                setFilterTool(e.target.value)
+                setPage(1)
+              }}
             >
               <option value="">全部工具</option>
               {TOOLS.map((t) => (
@@ -273,8 +327,23 @@ export default function DashboardPage() {
             </select>
             <select
               className={selectClass}
+              value={filterKind}
+              onChange={(e) => {
+                setFilterKind(e.target.value)
+                setPage(1)
+              }}
+            >
+              <option value="">全部提供商</option>
+              <option value="tavily">Tavily</option>
+              <option value="exa">Exa</option>
+            </select>
+            <select
+              className={selectClass}
               value={filterSuccess}
-              onChange={(e) => setFilterSuccess(e.target.value)}
+              onChange={(e) => {
+                setFilterSuccess(e.target.value)
+                setPage(1)
+              }}
             >
               <option value="">成功 + 失败</option>
               <option value="true">仅成功</option>
@@ -296,13 +365,38 @@ export default function DashboardPage() {
             </TableHeader>
             <TableBody>
               {logs.items.map((l) => (
-                <TableRow key={l.id} className={cn(!l.success && 'bg-red-500/[0.04] dark:bg-red-500/10')}>
+                <TableRow
+                  key={l.id}
+                  className={cn(
+                    'cursor-pointer',
+                    !l.success && 'bg-red-500/[0.04] dark:bg-red-500/10',
+                    'hover:bg-muted/60'
+                  )}
+                  onClick={() =>
+                    setDetail({
+                      tool: l.tool,
+                      upstream_key_kind: l.upstream_key_kind,
+                      params_json: l.params_json,
+                      response_json: l.response_json,
+                      credits: l.credits,
+                      success: l.success,
+                      error: l.error,
+                    })
+                  }
+                >
                   <TableCell className="whitespace-nowrap font-mono text-xs text-muted-foreground tabular-nums">
                     {fmtTime(l.created_at)}
                   </TableCell>
                   <TableCell>{l.proxy_key_name ?? '—'}</TableCell>
                   <TableCell className="font-mono text-xs">{l.tool}</TableCell>
-                  <TableCell>{l.upstream_key_nickname ?? '—'}</TableCell>
+                  <TableCell>
+                    {l.upstream_key_nickname ?? '—'}
+                    {l.upstream_key_kind && (
+                      <span className="ml-1.5 font-mono text-xs text-muted-foreground">
+                        {l.upstream_key_kind === 'exa' ? 'exa' : 'tav'}
+                      </span>
+                    )}
+                  </TableCell>
                   <TableCell>
                     {l.success ? (
                       <Badge
@@ -337,8 +431,53 @@ export default function DashboardPage() {
               )}
             </TableBody>
           </Table>
+
+          {/* 分页：每页条数 10~50（步进 10）+ 页码 */}
+          <div className="flex items-center justify-between mt-4">
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <span>每页</span>
+              <select
+                className={selectClass}
+                value={pageSize}
+                onChange={(e) => {
+                  const n = Number(e.target.value)
+                  localStorage.setItem('logPageSize', String(n))
+                  setPageSize(n)
+                }}
+              >
+                {PAGE_SIZES.map((n) => (
+                  <option key={n} value={n}>{n}</option>
+                ))}
+              </select>
+              <span>条</span>
+            </div>
+            <div className="flex items-center gap-1">
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={page <= 1}
+                onClick={() => setPage((p) => p - 1)}
+              >
+                上一页
+              </Button>
+              <span className="px-2 text-sm tabular-nums text-muted-foreground">
+                {page} / {totalPages}
+              </span>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={page >= totalPages}
+                onClick={() => setPage((p) => p + 1)}
+              >
+                下一页
+              </Button>
+            </div>
+          </div>
         </CardContent>
       </Card>
+
+      {/* 请求明细弹窗 */}
+      <LogDetailDialog log={detail} onClose={() => setDetail(null)} />
     </Layout>
   )
 }

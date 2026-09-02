@@ -7,6 +7,49 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 const KEY_A: &str = "tvly-aaaaaaaaaaaaaaaaaaaa1111";
 const KEY_B: &str = "tvly-bbbbbbbbbbbbbbbbbbbb2222";
 
+/// 清理逻辑直测：超过保留期（30 天）的日志整行删除（含 params_json / response_json），
+/// 未到期的保留。这是「完整响应会吃空间」的兜底——到期后大响应一并清掉。
+#[tokio::test]
+async fn cleanup_expired_deletes_old_rows_with_details() {
+    let pool = common::new_db().await;
+    let now = common::now();
+    let insert = |created_at: i64| {
+        sqlx::query(
+            "INSERT INTO request_logs \
+             (proxy_key_id, tool, params_summary, params_json, response_json, upstream_key_id, \
+              credits, duration_ms, success, error, created_at) \
+             VALUES (NULL, 'tavily_extract', 's', '{\"urls\":[]}', \
+                     '{\"results\":[{\"text\":\"big markdown\"}]}', NULL, 1, 100, 1, NULL, ?)",
+        )
+        .bind(created_at)
+    };
+    insert(now - 31 * 24 * 3600).execute(&pool).await.unwrap();
+    insert(now - 24 * 3600).execute(&pool).await.unwrap();
+
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM request_logs")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(count, 2, "应插入两条日志");
+
+    tavily_proxy::request_logs::cleanup_expired(
+        &pool,
+        std::time::Duration::from_secs(30 * 24 * 3600),
+    )
+    .await;
+
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM request_logs")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(count, 1, "31 天前的行（含大响应）应被删除");
+    let created_at: i64 = sqlx::query_scalar("SELECT created_at FROM request_logs")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(created_at > now - 30 * 24 * 3600, "未到期的行应保留");
+}
+
 /// 一对 key：A 已用 800/1000，B 已用 100/1000，B 应被选中。
 /// 返回（app, upstream, key_b_id）。
 async fn two_key_app(upstream: &MockServer) -> (common::TestApp, i64) {
@@ -132,7 +175,21 @@ async fn requests_are_logged_with_filters_and_stats() {
             .contains("第二个查询"),
         "应记录参数摘要: {first}"
     );
+    // 明细：完整参数与响应体
+    let params: serde_json::Value =
+        serde_json::from_str(first["params_json"].as_str().unwrap()).unwrap();
+    assert_eq!(params["query"], "第二个查询", "应存完整入参: {first}");
+    let resp: serde_json::Value =
+        serde_json::from_str(first["response_json"].as_str().unwrap()).unwrap();
+    assert_eq!(resp["usage"]["credits"], 2, "应存完整响应体: {first}");
+    assert_eq!(first["upstream_key_kind"], "tavily");
     assert!(first["error"].is_null());
+
+    // 按上游密钥提供商筛选：全是 tavily
+    let logs = get_logs(&app, "?kind=tavily").await;
+    assert_eq!(logs["total"], 2);
+    let logs = get_logs(&app, "?kind=exa").await;
+    assert_eq!(logs["total"], 0);
 
     // 按代理密钥筛选
     let logs = get_logs(&app, &format!("?proxy_key_id={proxy_key1_id}")).await;
