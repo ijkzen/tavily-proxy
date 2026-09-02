@@ -8,6 +8,7 @@ use std::time::Instant;
 use crate::app::AppState;
 use crate::auth::now;
 use crate::balancer::{self, Outcome};
+use crate::provider::Tool;
 use crate::{mcp, quota};
 
 pub enum ResearchOutcome {
@@ -34,26 +35,36 @@ pub async fn run(state: &AppState, proxy_key_id: i64, arguments: Value) -> Resea
     let mut body = arguments;
     body["include_usage"] = json!(true);
 
-    let (payload, submit_credits, upstream_key_id) =
-        match balancer::execute(state, "/research", &body).await {
-            Outcome::Success {
-                payload,
-                credits,
-                upstream_key_id,
-            } => (payload, credits, upstream_key_id),
-            Outcome::Passthrough {
+    let provider = &state.providers[crate::provider::Kind::Tavily as usize];
+    let (payload, submit_credits, upstream_key_id) = match balancer::execute(
+        state,
+        balancer::Exec {
+            provider,
+            tool: Tool::Search,
+            body: &body,
+        },
+    )
+    .await
+    {
+        Outcome::Success {
+            payload,
+            credits,
+            upstream_key_id,
+            ..
+        } => (payload, credits, upstream_key_id),
+        Outcome::Passthrough {
+            status,
+            payload,
+            upstream_key_id,
+        } => {
+            return ResearchOutcome::SubmitPassthrough {
                 status,
                 payload,
                 upstream_key_id,
-            } => {
-                return ResearchOutcome::SubmitPassthrough {
-                    status,
-                    payload,
-                    upstream_key_id,
-                };
-            }
-            Outcome::AllUnavailable => return ResearchOutcome::AllUnavailable,
-        };
+            };
+        }
+        Outcome::AllUnavailable => return ResearchOutcome::AllUnavailable,
+    };
     mcp::record_proxy_usage(state, proxy_key_id, submit_credits).await;
 
     let Some(request_id) = payload["request_id"].as_str().map(str::to_owned) else {
@@ -83,6 +94,7 @@ pub async fn run(state: &AppState, proxy_key_id: i64, arguments: Value) -> Resea
 
     poll_until_done(
         state,
+        &provider.base_url,
         upstream_key_id,
         proxy_key_id,
         submit_credits,
@@ -115,6 +127,7 @@ async fn finish_task(db: &sqlx::SqlitePool, request_id: &str, status: &str) {
 
 async fn poll_until_done(
     state: &AppState,
+    base_url: &str,
     upstream_key_id: i64,
     proxy_key_id: i64,
     submit_credits: i64,
@@ -136,13 +149,13 @@ async fn poll_until_done(
         }
         match state
             .upstream
-            .get_json(&format!("/research/{request_id}"), api_key)
+            .get_json(base_url, api_key, &format!("/research/{request_id}"))
             .await
         {
             Ok((200, payload)) => match payload["status"].as_str() {
                 Some("completed") => {
                     let credits = payload["usage"]["credits"].as_i64().unwrap_or(0);
-                    quota::record_usage(&state.db, upstream_key_id, credits).await;
+                    quota::record_usage(&state.db, upstream_key_id, credits as f64).await;
                     mcp::record_proxy_usage(state, proxy_key_id, credits).await;
                     break ResearchOutcome::Completed {
                         payload,

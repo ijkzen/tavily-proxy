@@ -28,7 +28,12 @@ async fn main() -> anyhow::Result<()> {
         db: pool,
         login_limiter: Default::default(),
         crypto,
-        upstream: tavily_proxy::upstream::UpstreamClient::new(config.tavily_base_url.clone()),
+        upstream: tavily_proxy::upstream::UpstreamClient::new(),
+        providers: std::sync::Arc::new(app::default_providers(
+            config.tavily_base_url,
+            config.exa_base_url,
+        )),
+        rr_cursor: Default::default(),
         quota_poll_interval: std::time::Duration::from_secs(config.quota_poll_interval_secs),
         cooldown: std::time::Duration::from_secs(config.cooldown_secs),
         research_timeout: std::time::Duration::from_secs(config.research_timeout_secs),

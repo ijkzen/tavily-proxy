@@ -7,7 +7,7 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 const KEY_A: &str = "tvly-aaaaaaaaaaaaaaaaaaaa1111";
 const KEY_B: &str = "tvly-bbbbbbbbbbbbbbbbbbbb2222";
 
-/// 起一对 key 的测试环境：A 已用 800/1000，B 已用 100/1000（B 剩余更多）。
+/// 起一对 key 的测试环境：A 已用 800/1000，B 已用 100/1000。
 /// 返回（app, upstream, 代理密钥 token）。
 async fn two_key_app(cooldown_secs: u64) -> (common::TestApp, MockServer, String) {
     let upstream = MockServer::start().await;
@@ -116,14 +116,24 @@ async fn call_search(app: &common::TestApp, token: &str) -> serde_json::Value {
         .1
 }
 
+/// 组内轮询：同一组内各 key 交替被选中，而不是总选剩余额度最多的。
 #[tokio::test]
-async fn picks_key_with_most_remaining_quota() {
+async fn round_robins_within_group() {
     let (app, upstream, token) = two_key_app(60).await;
+    mock_search(&upstream, KEY_A, 200).await;
     mock_search(&upstream, KEY_B, 200).await;
 
-    let body = call_search(&app, &token).await;
-    assert_ne!(body["result"]["isError"], true);
-    assert_eq!(search_keys_used(&upstream).await, vec![KEY_B]);
+    for _ in 0..4 {
+        let body = call_search(&app, &token).await;
+        assert_ne!(body["result"]["isError"], true);
+    }
+    let used = search_keys_used(&upstream).await;
+    // 4 次调用应 A/B 交替出现（轮询游标从 0 起：A, B, A, B）
+    assert_eq!(
+        used,
+        vec![KEY_A, KEY_B, KEY_A, KEY_B],
+        "组内应轮询: {used:?}"
+    );
 }
 
 #[tokio::test]
@@ -140,10 +150,16 @@ async fn failover_on_429_cools_down_then_recovers() {
     mock_search(&upstream, KEY_B, 200).await;
     mock_search(&upstream, KEY_A, 200).await;
 
-    // 第一次调用：B 限流 → 转移到 A 成功；B 进入冷却
+    // 第一次调用：游标落到 A（首个）成功 → A 已用；第二次 B 429 → 转移 A
     let body = call_search(&app, &token).await;
     assert_ne!(body["result"]["isError"], true);
-    assert_eq!(search_keys_used(&upstream).await, vec![KEY_B, KEY_A]);
+    let used = search_keys_used(&upstream).await;
+    assert_eq!(used.first().unwrap(), KEY_A, "首次应选中 A: {used:?}");
+    // 第三次调用前游标已推进，B 先被选中；B 429 → 转移到 A
+    let body = call_search(&app, &token).await;
+    assert_ne!(body["result"]["isError"], true);
+    let used = search_keys_used(&upstream).await;
+    assert_eq!(used.last().unwrap(), KEY_A, "B 冷却后应转移到 A: {used:?}");
     common::eventually(|| async {
         upstream_statuses(&app)
             .await
@@ -151,11 +167,12 @@ async fn failover_on_429_cools_down_then_recovers() {
     })
     .await;
 
-    // 冷却到期后：下一次调用触发 sweep，B 恢复 active 并因剩余额度更多被重新选中
+    // 冷却到期后：下一次调用触发 sweep，B 恢复 active，游标轮到 B
     tokio::time::sleep(std::time::Duration::from_millis(1200)).await;
     let body = call_search(&app, &token).await;
     assert_ne!(body["result"]["isError"], true);
-    assert_eq!(search_keys_used(&upstream).await.last().unwrap(), KEY_B);
+    let used = search_keys_used(&upstream).await;
+    assert_eq!(used.last().unwrap(), KEY_B, "恢复后应轮到 B: {used:?}");
     assert!(
         upstream_statuses(&app)
             .await
@@ -169,9 +186,13 @@ async fn exhausted_on_432_until_reset() {
     mock_search(&upstream, KEY_B, 432).await;
     mock_search(&upstream, KEY_A, 200).await;
 
+    // 第一次调用游标落 A → 成功；第二次轮到 B → 432 耗尽 → 转移 A
     let body = call_search(&app, &token).await;
     assert_ne!(body["result"]["isError"], true);
-    assert_eq!(search_keys_used(&upstream).await, vec![KEY_B, KEY_A]);
+    let body = call_search(&app, &token).await;
+    assert_ne!(body["result"]["isError"], true);
+    let used = search_keys_used(&upstream).await;
+    assert_eq!(used.first().unwrap(), KEY_A, "首次应选中 A: {used:?}");
     assert!(
         upstream_statuses(&app)
             .await
@@ -181,7 +202,8 @@ async fn exhausted_on_432_until_reset() {
     // 耗尽的 key 不再被选中
     let body = call_search(&app, &token).await;
     assert_ne!(body["result"]["isError"], true);
-    assert_eq!(search_keys_used(&upstream).await.last().unwrap(), KEY_A);
+    let used = search_keys_used(&upstream).await;
+    assert_eq!(used.last().unwrap(), KEY_A, "B 耗尽后只剩 A: {used:?}");
 }
 
 #[tokio::test]
@@ -190,8 +212,13 @@ async fn disabled_on_401_with_alert() {
     mock_search(&upstream, KEY_B, 401).await;
     mock_search(&upstream, KEY_A, 200).await;
 
+    // 第一次调用落 A 成功；第二次轮到 B → 401 禁用 → 转移 A
     let body = call_search(&app, &token).await;
     assert_ne!(body["result"]["isError"], true);
+    let body = call_search(&app, &token).await;
+    assert_ne!(body["result"]["isError"], true);
+    let used = search_keys_used(&upstream).await;
+    assert_eq!(used.first().unwrap(), KEY_A, "首次应选中 A: {used:?}");
     assert!(
         upstream_statuses(&app)
             .await
@@ -221,9 +248,13 @@ async fn failover_on_500() {
     mock_search(&upstream, KEY_B, 500).await;
     mock_search(&upstream, KEY_A, 200).await;
 
+    // 首次落 A 成功；第二次轮到 B → 500 抖动 → 转移 A
     let body = call_search(&app, &token).await;
     assert_ne!(body["result"]["isError"], true);
-    assert_eq!(search_keys_used(&upstream).await, vec![KEY_B, KEY_A]);
+    let body = call_search(&app, &token).await;
+    assert_ne!(body["result"]["isError"], true);
+    let used = search_keys_used(&upstream).await;
+    assert_eq!(used.first().unwrap(), KEY_A, "首次应选中 A: {used:?}");
     // 5xx 是上游抖动，不改变 key 状态
     assert!(
         upstream_statuses(&app)

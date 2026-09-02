@@ -6,6 +6,8 @@ use serde_json::{Value, json};
 
 use crate::app::AppState;
 use crate::auth::{AuthUser, now};
+use crate::provider::Kind;
+use crate::quota;
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -42,25 +44,28 @@ async fn alerts(State(state): State<AppState>, _user: AuthUser) -> Result<Json<V
 }
 
 /// 列表/详情里给前端的上游密钥视图——绝不含明文。
+/// usage 用 f64（CAST）：tavily 存整数 credits，exa 存美元浮点（本地记账）。
 type KeyRow = (
     i64,
     String,
     String,
     String,
+    String,
     i64,
-    i64,
-    Option<i64>,
+    f64,
+    Option<f64>,
     Option<i64>,
     i64,
 );
 
 fn to_json(row: KeyRow) -> Value {
-    let (id, nickname, tail, status, reset_day, usage, limit, fetched_at, created_at) = row;
+    let (id, nickname, tail, status, kind, reset_day, usage, limit, fetched_at, created_at) = row;
     json!({
         "id": id,
         "nickname": nickname,
         "key_tail": tail,
         "status": status,
+        "kind": kind,
         "reset_day": reset_day,
         "usage": usage,
         "limit": limit,
@@ -69,8 +74,9 @@ fn to_json(row: KeyRow) -> Value {
     })
 }
 
-const LIST_SQL: &str = "SELECT id, nickname, key_tail, status, reset_day, usage_cached, \
-     limit_cached, usage_fetched_at, created_at FROM upstream_keys ORDER BY id";
+const LIST_SQL: &str = "SELECT id, nickname, key_tail, status, kind, reset_day, \
+     CAST(usage_cached AS REAL), CAST(limit_cached AS REAL), usage_fetched_at, created_at \
+     FROM upstream_keys ORDER BY id";
 
 async fn list(State(state): State<AppState>, _user: AuthUser) -> Result<Json<Value>, StatusCode> {
     let rows = sqlx::query_as::<_, KeyRow>(LIST_SQL)
@@ -84,6 +90,7 @@ async fn list(State(state): State<AppState>, _user: AuthUser) -> Result<Json<Val
 struct CreateRequest {
     key: String,
     nickname: String,
+    kind: Option<String>,
     reset_day: Option<i64>,
 }
 
@@ -95,6 +102,13 @@ async fn create(
     let key = body.key.trim();
     let nickname = body.nickname.trim();
     let reset_day = body.reset_day.unwrap_or(1);
+    // 类型显式指定（tavily / exa）；未传时按前缀推断（存量调用方兼容）
+    let kind = match body.kind.as_deref() {
+        Some("tavily") => Kind::Tavily,
+        Some("exa") => Kind::Exa,
+        Some(_) => return Err(StatusCode::BAD_REQUEST),
+        None => Kind::from_key(key),
+    };
     if key.is_empty() || nickname.is_empty() || !(1..=28).contains(&reset_day) {
         return Err(StatusCode::BAD_REQUEST);
     }
@@ -112,17 +126,23 @@ async fn create(
         .collect();
 
     let result = sqlx::query(
-        "INSERT INTO upstream_keys (nickname, key_ciphertext, key_tail, reset_day, created_at) \
-         VALUES (?, ?, ?, ?, ?)",
+        "INSERT INTO upstream_keys (nickname, key_ciphertext, key_tail, kind, reset_day, created_at) \
+         VALUES (?, ?, ?, ?, ?, ?)",
     )
     .bind(nickname)
     .bind(ciphertext)
     .bind(&tail)
+    .bind(kind.as_str())
     .bind(reset_day)
     .bind(now())
     .execute(&state.db)
     .await
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    // Exa 密钥初始化本地记账：每月 10 美元，重置点为下月 1 号（ADR-0004）
+    if kind == Kind::Exa {
+        quota::init_exa_quota(&state.db, result.last_insert_rowid()).await;
+    }
 
     let row = sqlx::query_as::<_, KeyRow>(&format!("{LIST_SQL} /* created */"))
         .fetch_all(&state.db)

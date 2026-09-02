@@ -9,11 +9,24 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Layout } from '@/components/Layout'
 import { SecretCell } from '@/components/Secret'
 import { api } from '@/lib/api'
-import { STATUS_LABEL, STATUS_VARIANT, type UpstreamKey } from '@/lib/upstream-keys'
+import {
+  KIND_LABEL,
+  STATUS_LABEL,
+  STATUS_VARIANT,
+  usageText,
+  type KeyKind,
+  type UpstreamKey,
+} from '@/lib/upstream-keys'
+
+const KEY_PLACEHOLDER: Record<KeyKind, string> = {
+  tavily: 'tvly-…',
+  exa: 'exa-…',
+}
 
 export default function UpstreamKeysPage() {
   const [keys, setKeys] = useState<UpstreamKey[]>([])
   const [newKey, setNewKey] = useState('')
+  const [kind, setKind] = useState<KeyKind>('tavily')
   const [nickname, setNickname] = useState('')
   const [resetDay, setResetDay] = useState('1')
   const [error, setError] = useState('')
@@ -34,7 +47,7 @@ export default function UpstreamKeysPage() {
     setError('')
     const resp = await api('/api/upstream-keys', {
       method: 'POST',
-      json: { key: newKey, nickname, reset_day: Number(resetDay) || 1 },
+      json: { key: newKey, kind, nickname, reset_day: Number(resetDay) || 1 },
     })
     if (resp.ok) {
       setNewKey('')
@@ -59,13 +72,28 @@ export default function UpstreamKeysPage() {
       <Card className="mb-6">
         <CardHeader>
           <CardTitle>添加上游密钥</CardTitle>
-          <CardDescription>Tavily 官方 API key（tvly-…），添加后参与负载均衡。密钥加密存储，可随时点眼睛查看明文或一键复制。</CardDescription>
+          <CardDescription>
+            Tavily 官方 key（tvly-…）或 Exa 官方 key（exa-…），添加后参与组间随机 + 组内轮询的负载均衡。
+            密钥加密存储，可随时点眼睛查看明文或一键复制。
+          </CardDescription>
         </CardHeader>
         <CardContent>
-          <form onSubmit={add} className="grid gap-4 sm:grid-cols-[1fr_1fr_120px_auto] items-end">
+          <form onSubmit={add} className="grid gap-4 sm:grid-cols-[1fr_120px_1fr_120px_auto] items-end">
             <div className="space-y-2">
               <Label htmlFor="key">密钥</Label>
-              <Input id="key" type="password" value={newKey} onChange={(e) => setNewKey(e.target.value)} placeholder="tvly-…" className="font-mono" />
+              <Input id="key" type="password" value={newKey} onChange={(e) => setNewKey(e.target.value)} placeholder={KEY_PLACEHOLDER[kind]} className="font-mono" />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="kind">类型</Label>
+              <select
+                id="kind"
+                className="h-10 w-full rounded-md border border-input bg-card px-2 text-sm shadow-sm focus:outline-none focus:ring-1 focus:ring-ring"
+                value={kind}
+                onChange={(e) => setKind(e.target.value as KeyKind)}
+              >
+                <option value="tavily">Tavily</option>
+                <option value="exa">Exa</option>
+              </select>
             </div>
             <div className="space-y-2">
               <Label htmlFor="nickname">昵称</Label>
@@ -93,6 +121,7 @@ export default function UpstreamKeysPage() {
             <TableHeader>
               <TableRow>
                 <TableHead>昵称</TableHead>
+                <TableHead>类型</TableHead>
                 <TableHead>密钥</TableHead>
                 <TableHead>状态</TableHead>
                 <TableHead>已用 / 总额度</TableHead>
@@ -104,12 +133,17 @@ export default function UpstreamKeysPage() {
                 <TableRow key={k.id}>
                   <TableCell>{k.nickname}</TableCell>
                   <TableCell>
-                    <SecretCell revealPath={`/api/upstream-keys/${k.id}/reveal`} masked={`tvly-••••${k.key_tail}`} />
+                    <Badge variant="outline" className={k.kind === 'exa' ? 'border-violet-500/40 text-violet-600 dark:text-violet-400' : ''}>
+                      {KIND_LABEL[k.kind]}
+                    </Badge>
+                  </TableCell>
+                  <TableCell>
+                    <SecretCell revealPath={`/api/upstream-keys/${k.id}/reveal`} masked={`${k.kind === 'exa' ? 'exa' : 'tvly'}-••••${k.key_tail}`} />
                   </TableCell>
                   <TableCell>
                     <Badge variant={STATUS_VARIANT[k.status]}>{STATUS_LABEL[k.status]}</Badge>
                   </TableCell>
-                  <TableCell className="tabular-nums">{k.limit === null ? `${k.usage} / 未知` : `${k.usage} / ${k.limit}`}</TableCell>
+                  <TableCell className="tabular-nums">{usageText(k)}</TableCell>
                   <TableCell className="text-right space-x-2">
                     {k.status === 'disabled' ? (
                       <Button variant="outline" size="sm" onClick={() => act(k.id, 'enable')}>启用</Button>
@@ -122,7 +156,7 @@ export default function UpstreamKeysPage() {
               ))}
               {keys.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={5} className="text-center text-muted-foreground py-8">
+                  <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
                     <KeyRound className="mx-auto size-6 mb-2 opacity-60" />
                     还没有上游密钥，先添加一个
                   </TableCell>

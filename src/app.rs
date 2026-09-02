@@ -1,11 +1,13 @@
 use axum::http::StatusCode;
 use axum::{Router, routing::get};
 use sqlx::SqlitePool;
+use std::sync::atomic::AtomicUsize;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use crate::auth::LoginRateLimiter;
 use crate::crypto::Crypto;
+use crate::provider::{Kind, Provider};
 use crate::upstream::UpstreamClient;
 use crate::{assets, auth, mcp, proxy_keys, quota, request_logs, research, upstream_keys};
 
@@ -15,6 +17,10 @@ pub struct AppState {
     pub login_limiter: Arc<Mutex<LoginRateLimiter>>,
     pub crypto: Crypto,
     pub upstream: UpstreamClient,
+    /// 按 Kind 索引的提供商描述（tavily / exa 各一）。
+    pub providers: Arc<Vec<Provider>>,
+    /// 组内轮询游标（每提供商一个）。
+    pub rr_cursor: Arc<[AtomicUsize; 2]>,
     pub quota_poll_interval: Duration,
     pub cooldown: Duration,
     pub research_timeout: Duration,
@@ -35,6 +41,14 @@ pub fn build(state: AppState) -> Router {
         .merge(mcp::router(state.clone()))
         .fallback(assets::static_handler)
         .with_state(state)
+}
+
+/// 按 Kind 构造两个提供商（tavily / exa）。
+pub fn default_providers(tavily_base_url: String, exa_base_url: String) -> Vec<Provider> {
+    vec![
+        Provider::new(Kind::Tavily, tavily_base_url),
+        Provider::new(Kind::Exa, exa_base_url),
+    ]
 }
 
 async fn healthz() -> StatusCode {

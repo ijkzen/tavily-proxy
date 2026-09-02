@@ -6,6 +6,7 @@ pub mod config;
 pub mod crypto;
 pub mod db;
 pub mod mcp;
+pub mod provider;
 pub mod proxy_keys;
 pub mod quota;
 pub mod request_logs;

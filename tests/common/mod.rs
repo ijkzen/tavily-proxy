@@ -1,6 +1,7 @@
 use std::net::TcpListener;
 use std::time::Duration;
 
+use sqlx::SqlitePool;
 use tavily_proxy::app::{self, AppState};
 use tavily_proxy::db;
 use tavily_proxy::upstream::UpstreamClient;
@@ -109,7 +110,13 @@ async fn spawn_app_with(tavily_base_url: String, tuning: Tuning) -> TestApp {
             .expect("crypto"),
         db: pool,
         login_limiter: Default::default(),
-        upstream: UpstreamClient::new(tavily_base_url.clone()),
+        upstream: UpstreamClient::new(),
+        // 测试里 tavily/exa 共用一个 mock server：端点按 path + 鉴权头区分
+        providers: std::sync::Arc::new(app::default_providers(
+            tavily_base_url.clone(),
+            tavily_base_url.clone(),
+        )),
+        rr_cursor: Default::default(),
         quota_poll_interval: tuning.quota_poll,
         cooldown: tuning.cooldown,
         research_timeout: tuning.research_timeout,
@@ -135,6 +142,24 @@ async fn spawn_app_with(tavily_base_url: String, tuning: Tuning) -> TestApp {
 #[allow(dead_code)]
 pub async fn spawn_app_no_upstream() -> TestApp {
     spawn_app("http://127.0.0.1:9".into()).await
+}
+
+/// 独立建一个跑过迁移的临时 SQLite 库（供不依赖 HTTP 层的单元式集成测试）。
+/// 临时目录泄漏给整个测试进程（测试进程短命，无实际影响）。
+#[allow(dead_code)]
+pub async fn new_db() -> SqlitePool {
+    let dir = Box::leak(Box::new(tempfile::tempdir().expect("tempdir")));
+    let db_url = format!("sqlite://{}/unit.db", dir.path().display());
+    db::init(&db_url).await.expect("init db")
+}
+
+/// 当前 unix 秒（与 app 内 now() 同源）。
+#[allow(dead_code)]
+pub fn now() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64
 }
 
 /// 创建账号（首访引导），随后的请求都带登录态。

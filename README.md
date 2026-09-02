@@ -2,23 +2,24 @@
 
 [![CI](https://github.com/ijkzen/tavily-proxy/actions/workflows/ci.yml/badge.svg)](https://github.com/ijkzen/tavily-proxy/actions/workflows/ci.yml)
 
-把 Tavily 官方的 [远程 MCP 服务器](https://docs.tavily.com/mcp-server) 变成**自托管版本**：
-你自己持有上游密钥池，通过统一的 MCP 端点向外提供 `tavily_search` / `tavily_extract`
+把 Tavily / Exa 官方的搜索与提取能力变成**自托管版本**：
+你自己持有上游密钥池（Tavily `tvly-...` 与 Exa `exa-...`），通过统一的 MCP 端点向外提供 `tavily_search` / `tavily_extract`
 两个工具（其余上游能力如 crawl/map/research 不对外暴露），并在多个上游密钥之间自动选路、
 限流冷却、额度耗尽切换与请求日志统计。
 
 ## 功能特性
 
-- **MCP 端点**：`POST /mcp`（Streamable HTTP），只暴露 `tavily_search` 与 `tavily_extract`，参数与官方完全一致，MCP 客户端可零改动接入
-- **密钥池**：多个 Tavily 官方密钥（`tvly-...`）统一管理，额度感知选路（有效剩余 credits 最多优先）
-- **状态机**：每个上游密钥有 冷却（429 短暂移出）/ 耗尽（432/433 到周期重置）/ 禁用（401 或手动停用）三种健康状态
+- **MCP 端点**：`POST /mcp`（Streamable HTTP），只暴露 `tavily_search` 与 `tavily_extract`；每次调用在 Tavily / Exa 两组密钥间随机选组、组内轮询，MCP 客户端零改动接入
+- **密钥池**：Tavily（`tvly-...`）与 Exa（`exa-...`）官方密钥统一管理，按提供商分组；看板按组内剩余额度排名（Tavily credits / Exa 美元）
+- **状态机**：每个上游密钥有 冷却（429 短暂移出）/ 耗尽（Tavily 432/433、Exa 402，到周期重置）/ 禁用（401 或手动停用）三种健康状态
+- **双提供商记账**：Tavily 以 `GET /usage` 轮询额度；Exa 无公开余额接口，按「每月 10 美元」本地记账（每次请求按 `costDollars` 累减，每月 1 号重置）
 - **代理密钥**：自签 `tp-...` 密钥，可随时吊销；上游密钥密文存储（AES-GCM）
 - **管理界面**：Web 登录（单用户）+ 中文看板——密钥池用量与健康状态、请求日志（保留 30 天）、成功率与延迟统计
 - **单二进制**：Rust（axum + sqlx/SQLite）+ 内嵌 React 前端（rust-embed），`FROM scratch` 即可运行
 
 ## 界面预览
 
-| 看板（用量与健康状态） | 上游密钥池（额度感知管理） |
+| 看板（分组用量与健康状态） | 上游密钥池（Tavily / Exa 管理） |
 | --- | --- |
 | ![看板](docs/screenshots/dashboard.png) | ![上游密钥池](docs/screenshots/upstream-keys.png) |
 
@@ -26,7 +27,8 @@
 
 ```
 MCP 客户端 ──POST /mcp──> tavily-proxy ──REST──> api.tavily.com
-   (Claude 等)    Bearer tp-...    │ 额度感知选路、冷却/耗尽/禁用
+   (Claude 等)    Bearer tp-...    │              └──> api.exa.ai（x-api-key）
+                                  │ 组随机选路（Tavily / Exa）、组内轮询、冷却/耗尽/禁用
                                   └──> SQLite（密钥池、日志、会话）
 ```
 
@@ -39,7 +41,7 @@ MCP 客户端 ──POST /mcp──> tavily-proxy ──REST──> api.tavily.c
 
 - Rust（stable，2024 edition）
 - Node ≥ 22 + pnpm（`corepack enable pnpm`）
-- 至少一个 Tavily 官方 API key（[api.tavily.com](https://app.tavily.com/)）
+- 至少一个 Tavily 官方 API key（[api.tavily.com](https://app.tavily.com/)）或 Exa 官方 key（[exa.ai](https://dashboard.exa.ai/api-keys)）
 
 ### 本地运行
 

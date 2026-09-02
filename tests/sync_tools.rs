@@ -93,7 +93,7 @@ async fn sync_tools_share_failover_pipeline() {
             .mount(&upstream)
             .await;
     }
-    // B 剩余更多 → 首选 B；B 的 /extract 500，A 的 200
+    // 组内轮询：第一次调用落 A（成功）；第二次轮到 B，B 的 /extract 500 → 转移 A
     Mock::given(method("POST"))
         .and(path("/extract"))
         .and(header("authorization", format!("Bearer {KEY_B}")))
@@ -132,6 +132,7 @@ async fn sync_tools_share_failover_pipeline() {
     })
     .await;
 
+    // 第一次调用：游标落 A → 成功
     let (_, body) = common::mcp_call_tool(
         &app,
         &token,
@@ -141,8 +142,30 @@ async fn sync_tools_share_failover_pipeline() {
     )
     .await;
     assert_ne!(body["result"]["isError"], true);
+    let extracts = extract_keys_used(&upstream).await;
+    assert_eq!(extracts, vec![KEY_A], "首次应选中 A: {extracts:?}");
 
-    let extracts: Vec<String> = upstream
+    // 第二次调用：轮到 B → 500 → 转移 A 成功（失败转移生效）
+    let (_, body) = common::mcp_call_tool(
+        &app,
+        &token,
+        11,
+        "tavily_extract",
+        json!({"urls": ["https://example.com"]}),
+    )
+    .await;
+    assert_ne!(body["result"]["isError"], true);
+    let extracts = extract_keys_used(&upstream).await;
+    assert_eq!(
+        extracts,
+        vec![KEY_A, KEY_B, KEY_A],
+        "B 500 后应转移 A: {extracts:?}"
+    );
+}
+
+/// mock 上游实际收到的 /extract 请求所用的 Bearer key 序列。
+async fn extract_keys_used(upstream: &MockServer) -> Vec<String> {
+    upstream
         .received_requests()
         .await
         .unwrap_or_default()
@@ -156,6 +179,5 @@ async fn sync_tools_share_failover_pipeline() {
                 .trim_start_matches("Bearer ")
                 .to_owned()
         })
-        .collect();
-    assert_eq!(extracts, vec![KEY_B, KEY_A], "应先试 B，500 后转移 A");
+        .collect()
 }

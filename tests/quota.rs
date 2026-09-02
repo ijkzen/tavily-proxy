@@ -47,7 +47,9 @@ async fn poller_refreshes_quota_from_usage_endpoint() {
 
     common::eventually(|| async {
         let key = first_key(&app).await;
-        key["usage"] == 100 && key["limit"] == 1000 && key["usage_fetched_at"].is_i64()
+        key["usage"].as_f64().unwrap_or(-1.0) == 100.0
+            && key["limit"].as_f64().unwrap_or(-1.0) == 1000.0
+            && key["usage_fetched_at"].is_i64()
     })
     .await;
 }

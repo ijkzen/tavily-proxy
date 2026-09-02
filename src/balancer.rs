@@ -1,8 +1,12 @@
-//! 选路与失败转移（票 08）：额度感知选路 + 错误驱动的状态机。
+//! 选路与失败转移（票 08）：提供商分组随机 + 组内轮询 + 错误驱动的状态机。
+//!
+//! 分组选路（ADR-0004）：每次工具调用先按提供商（tavily / exa）把健康密钥
+//! 分成两组，随机挑一组（有 key 的组等概率），再在该组内做轮询——组内不
+//! 再看额度高低，避免某组内额度最好的 key 被打满。
 //!
 //! 状态机（CONTEXT.md「密钥状态」）：
 //! - 429 → 冷却 cooling_until = now + cooldown，到期自动恢复
-//! - 432/433 → 耗尽 exhausted_until = 下一个重置日 0 点（UTC）
+//! - 432/433（tavily）/ 402（exa）→ 耗尽 exhausted_until = 下一个重置点
 //! - 401 → 禁用 + 告警（key_invalid），需人工恢复
 //! - 5xx/网络错误 → 不改动状态，本请求内换 key 重试
 //! - 其他 4xx（如 400）→ 原样透传，不重试
@@ -10,16 +14,19 @@
 use serde_json::Value;
 use sqlx::SqlitePool;
 use std::collections::HashSet;
+use std::sync::atomic::Ordering;
 use time::{Date, Month, OffsetDateTime};
 
 use crate::app::AppState;
 use crate::auth::now;
+use crate::provider::{Kind, Provider, Target, Tool};
 use crate::quota;
 
 pub enum Outcome {
     Success {
         payload: Value,
         credits: i64,
+        unit: &'static str,
         upstream_key_id: i64,
     },
     /// 上游 4xx（调用方问题），原样带状态码与响应体透传
@@ -32,85 +39,126 @@ pub enum Outcome {
     AllUnavailable,
 }
 
+/// 一次执行的入参：工具（search/extract）+ 目标提供商 + 请求体。
+pub struct Exec<'a> {
+    pub provider: &'a Provider,
+    pub tool: Tool,
+    pub body: &'a Value,
+}
+
+/// 在有健康密钥的提供商组之间等概率随机挑一组（组随机，ADR-0004）。
+/// 返回该组 provider；没有任何组有健康 key 时返回 None。
+pub async fn pick_group(state: &AppState, _tool: Tool) -> Option<(Kind, &Provider)> {
+    sweep_expired(&state.db).await;
+    let mut available: Vec<Kind> = Vec::new();
+    for provider in state.providers.iter() {
+        let count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM upstream_keys WHERE status = 'active' AND kind = ?",
+        )
+        .bind(provider.kind.as_str())
+        .fetch_one(&state.db)
+        .await
+        .ok()?;
+        if count > 0 {
+            available.push(provider.kind);
+        }
+    }
+    use rand::seq::IndexedRandom;
+    let kind = *available.choose(&mut rand::rng())?;
+    Some((kind, &state.providers[kind as usize]))
+}
+
 /// 带失败转移地执行一次上游调用。
-pub async fn execute(state: &AppState, path: &str, body: &Value) -> Outcome {
+pub async fn execute(state: &AppState, exec: Exec<'_>) -> Outcome {
     let mut tried: HashSet<i64> = HashSet::new();
     loop {
-        let Some((key_id, ciphertext)) = pick_best(state, &tried).await else {
+        let Some(target) = pick_next(state, exec.provider, &tried).await else {
             return Outcome::AllUnavailable;
         };
-        let Ok(api_key) = state.crypto.decrypt(&ciphertext) else {
-            tried.insert(key_id);
-            continue;
-        };
-        match state.upstream.post_json(path, &api_key, body).await {
+        let path = exec.provider.tool_path(exec.tool);
+        match state
+            .upstream
+            .post_json(
+                &exec.provider.base_url,
+                exec.provider,
+                &target.api_key,
+                path,
+                exec.body,
+            )
+            .await
+        {
             Ok((status, payload)) if (200..300).contains(&status) => {
-                let credits = payload["usage"]["credits"].as_i64().unwrap_or(0);
-                quota::record_usage(&state.db, key_id, credits).await;
+                let usage = exec.provider.usage_of(&payload);
+                let credits = usage.amount.round() as i64;
+                quota::record_usage(&state.db, target.key_id, usage.amount).await;
                 return Outcome::Success {
                     payload,
                     credits,
-                    upstream_key_id: key_id,
+                    unit: usage.unit,
+                    upstream_key_id: target.key_id,
                 };
             }
             Ok((status, payload)) => match status {
                 429 => {
-                    mark_cooling(state, key_id).await;
-                    tried.insert(key_id);
+                    mark_cooling(state, target.key_id).await;
+                    tried.insert(target.key_id);
                 }
-                432 | 433 => {
-                    mark_exhausted(state, key_id).await;
-                    tried.insert(key_id);
+                _ if exec.provider.is_exhausted(status) => {
+                    mark_exhausted(state, target.key_id).await;
+                    tried.insert(target.key_id);
                 }
                 401 => {
-                    mark_invalid(state, key_id).await;
-                    tried.insert(key_id);
+                    mark_invalid(state, target.key_id).await;
+                    tried.insert(target.key_id);
                 }
                 400..=499 => {
                     return Outcome::Passthrough {
                         status,
                         payload,
-                        upstream_key_id: key_id,
+                        upstream_key_id: target.key_id,
                     };
                 }
                 _ => {
                     // 5xx：上游抖动，不动状态，换 key 重试
-                    tried.insert(key_id);
+                    tried.insert(target.key_id);
                 }
             },
             Err(_) => {
-                tried.insert(key_id);
+                tried.insert(target.key_id);
             }
         }
     }
 }
 
-/// 在健康 key 中选有效剩余额度最多者（平手随机）。
-/// limit 未知（NULL，还没轮询过）按无限处理——新 key 优先被试。
-async fn pick_best(state: &AppState, exclude: &HashSet<i64>) -> Option<(i64, String)> {
+/// 在指定提供商组内轮询选下一个健康 key：游标按提供商分桶推进，组内均匀轮流。
+/// 空组或解密失败返回 None。
+async fn pick_next<'a>(
+    state: &AppState,
+    provider: &'a Provider,
+    exclude: &HashSet<i64>,
+) -> Option<Target<'a>> {
     sweep_expired(&state.db).await;
-    let rows = sqlx::query_as::<_, (i64, String, i64, Option<i64>)>(
-        "SELECT id, key_ciphertext, usage_cached, limit_cached \
-         FROM upstream_keys WHERE status = 'active'",
+    let rows = sqlx::query_as::<_, (i64, String)>(
+        "SELECT id, key_ciphertext FROM upstream_keys \
+         WHERE status = 'active' AND kind = ?",
     )
+    .bind(provider.kind.as_str())
     .fetch_all(&state.db)
     .await
     .ok()?;
-
-    let mut candidates: Vec<(i64, String, i64)> = rows
+    let candidates: Vec<(i64, String)> = rows
         .into_iter()
-        .filter(|(id, ..)| !exclude.contains(id))
-        .map(|(id, ct, usage, limit)| {
-            let remaining = limit.map(|l| l - usage).unwrap_or(i64::MAX);
-            (id, ct, remaining)
-        })
+        .filter(|(id, _)| !exclude.contains(id))
         .collect();
-    let max = candidates.iter().map(|c| c.2).max()?;
-    candidates.retain(|c| c.2 == max);
-    use rand::seq::IndexedRandom;
-    candidates
-        .choose(&mut rand::rng())
-        .map(|(id, ct, _)| (*id, ct.clone()))
+    if candidates.is_empty() {
+        return None;
+    }
+
+    let bucket = &state.rr_cursor[provider.kind as usize];
+    let start = bucket.fetch_add(1, Ordering::Relaxed) % candidates.len();
+    let (key_id, ciphertext) = &candidates[start];
+    let api_key = state.crypto.decrypt(ciphertext).ok()?;
+    Some(Target::new(provider, *key_id, api_key))
 }
 
 /// 把冷却/耗尽到期的 key 恢复为 active，保证 status 列反映当下。
@@ -137,22 +185,31 @@ async fn mark_cooling(state: &AppState, key_id: i64) {
 }
 
 async fn mark_exhausted(state: &AppState, key_id: i64) {
-    let reset_day =
-        sqlx::query_scalar::<_, i64>("SELECT reset_day FROM upstream_keys WHERE id = ?")
-            .bind(key_id)
-            .fetch_optional(&state.db)
-            .await
-            .ok()
-            .flatten()
-            .unwrap_or(1);
-    let until = next_reset(now(), reset_day);
+    let reset_at = next_reset_at(&state.db, key_id).await;
     let _ = sqlx::query(
         "UPDATE upstream_keys SET status = 'exhausted', exhausted_until = ? WHERE id = ?",
     )
-    .bind(until)
+    .bind(reset_at)
     .bind(key_id)
     .execute(&state.db)
     .await;
+}
+
+/// 下一个额度重置点：Exa 用本地记账的 quota_reset_at（每月 1 号），Tavily 按 reset_day。
+async fn next_reset_at(db: &SqlitePool, key_id: i64) -> i64 {
+    let row = sqlx::query_as::<_, (String, Option<i64>, i64)>(
+        "SELECT kind, quota_reset_at, reset_day FROM upstream_keys WHERE id = ?",
+    )
+    .bind(key_id)
+    .fetch_optional(db)
+    .await
+    .ok()
+    .flatten();
+    match row {
+        Some((kind, Some(reset_at), _)) if kind == "exa" => reset_at,
+        Some((_, _, reset_day)) => next_reset(now(), reset_day),
+        None => next_reset(now(), 1),
+    }
 }
 
 async fn mark_invalid(state: &AppState, key_id: i64) {

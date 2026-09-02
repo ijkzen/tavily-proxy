@@ -1,4 +1,5 @@
-//! Tavily REST API 客户端。
+//! 上游 REST 客户端：向指定基址发起带鉴权的 JSON 请求。
+//! 基址与鉴权方式由调用方（provider.rs 的 Provider）决定。
 
 use anyhow::Context;
 use serde::Deserialize;
@@ -6,7 +7,6 @@ use serde_json::Value;
 
 #[derive(Clone)]
 pub struct UpstreamClient {
-    base_url: String,
     http: reqwest::Client,
 }
 
@@ -29,19 +29,23 @@ pub struct AccountUsage {
 }
 
 impl UpstreamClient {
-    pub fn new(base_url: String) -> Self {
+    pub fn new() -> Self {
         let http = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(30))
             .build()
             .expect("reqwest client");
-        Self { base_url, http }
+        Self { http }
     }
 
-    /// GET /usage — 额度查询（未文档化端点，ADR-0002）。
-    pub async fn fetch_usage(&self, api_key: &str) -> anyhow::Result<UsageResponse> {
+    /// GET /usage — 额度查询（未文档化端点，ADR-0002）。仅 Tavily 支持。
+    pub async fn fetch_usage(
+        &self,
+        base_url: &str,
+        api_key: &str,
+    ) -> anyhow::Result<UsageResponse> {
         let resp = self
             .http
-            .get(format!("{}/usage", self.base_url))
+            .get(format!("{base_url}/usage"))
             .bearer_auth(api_key)
             .send()
             .await
@@ -52,25 +56,32 @@ impl UpstreamClient {
     }
 
     /// POST 一个 JSON 到上游端点（/search 等），返回（状态码，解析后的响应体）。
+    /// 鉴权头由 provider 决定（tavily Bearer / exa x-api-key）。
     pub async fn post_json(
         &self,
-        path: &str,
+        base_url: &str,
+        provider: &crate::provider::Provider,
         api_key: &str,
+        path: &str,
         body: &Value,
     ) -> anyhow::Result<(u16, Value)> {
-        let req = self
-            .http
-            .post(format!("{}{path}", self.base_url))
-            .bearer_auth(api_key)
-            .json(body);
+        let req = self.http.post(format!("{base_url}{path}")).json(body);
+        let Some(req) = provider.auth(req, api_key) else {
+            return Err(anyhow::anyhow!("密钥无法通过 {} 鉴权", provider.name));
+        };
         self.send(req).await
     }
 
     /// GET 一个上游端点（/research/{id} 轮询等），返回（状态码，解析后的响应体）。
-    pub async fn get_json(&self, path: &str, api_key: &str) -> anyhow::Result<(u16, Value)> {
+    pub async fn get_json(
+        &self,
+        base_url: &str,
+        api_key: &str,
+        path: &str,
+    ) -> anyhow::Result<(u16, Value)> {
         let req = self
             .http
-            .get(format!("{}{path}", self.base_url))
+            .get(format!("{base_url}{path}"))
             .bearer_auth(api_key);
         self.send(req).await
     }
@@ -81,5 +92,11 @@ impl UpstreamClient {
         let text = resp.text().await.context("读取上游响应失败")?;
         let json = serde_json::from_str(&text).unwrap_or(Value::String(text));
         Ok((status, json))
+    }
+}
+
+impl Default for UpstreamClient {
+    fn default() -> Self {
+        Self::new()
     }
 }

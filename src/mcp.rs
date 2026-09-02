@@ -15,6 +15,7 @@ use serde_json::{Value, json};
 use std::time::Instant;
 
 use crate::app::AppState;
+use crate::provider::{Kind, Tool};
 use crate::{balancer, proxy_keys, request_logs};
 
 pub fn router(state: AppState) -> Router<AppState> {
@@ -206,36 +207,74 @@ async fn call_tool(
     name: &str,
     arguments: Value,
 ) -> Response {
-    // 同步工具：名称 → 上游 REST 路径
-    let path = match name {
-        "tavily_search" => "/search",
-        "tavily_extract" => "/extract",
+    // 同步工具：工具名 → 语义工具；tavily_search/extract 在 tavily 与 exa
+    // 两组之间随机选组（组内轮询），见 ADR-0004
+    let tool_kind = match name {
+        "tavily_search" => Tool::Search,
+        "tavily_extract" => Tool::Extract,
         _ => return tool_error(id, format!("未知工具: {name}")),
     };
-    call_sync_tool(state, proxy_key_id, id, name, path, arguments).await
+    call_sync_tool(state, proxy_key_id, id, name, tool_kind, arguments).await
 }
 
-/// 同步工具通用管道：注入 include_usage → 选路器+状态机 → 记账/透传 → 落日志。
+/// 同步工具通用管道：组随机 → 参数翻译 → 选路器+状态机 → 记账/透传 → 落日志。
 async fn call_sync_tool(
     state: &AppState,
     proxy_key_id: i64,
     id: Value,
     tool: &str,
-    path: &str,
+    tool_kind: Tool,
     arguments: Value,
 ) -> Response {
     let log = ToolLog::start(proxy_key_id, tool, &arguments);
-    let mut body = arguments;
-    body["include_usage"] = json!(true);
 
-    match balancer::execute(state, path, &body).await {
+    // 组随机：在有健康 key 的提供商组中等概率挑一组；一组都没有 → 不可用
+    let Some((provider_kind, provider)) = balancer::pick_group(state, tool_kind).await else {
+        let msg = "所有上游密钥暂不可用（限流/耗尽/已禁用），请稍后重试或检查密钥池";
+        log.finish(state, None, 0, false, None, Some(msg.to_owned()))
+            .await;
+        return tool_error(id, msg);
+    };
+
+    // 按选中组的原生参数翻译；tavily 额外注入 include_usage
+    let mut body = match provider.translate(tool_kind, &arguments) {
+        Some(b) => b,
+        None => {
+            let msg = "参数对所选提供商无效";
+            log.finish(state, None, 0, false, None, Some(msg.to_owned()))
+                .await;
+            return tool_error(id, msg);
+        }
+    };
+    if provider_kind == Kind::Tavily {
+        body["include_usage"] = json!(true);
+    }
+
+    match balancer::execute(
+        state,
+        balancer::Exec {
+            provider,
+            tool: tool_kind,
+            body: &body,
+        },
+    )
+    .await
+    {
         balancer::Outcome::Success {
             payload,
             credits,
+            unit: _,
             upstream_key_id,
         } => {
-            log.finish(state, Some(upstream_key_id), credits, true, None)
-                .await;
+            log.finish(
+                state,
+                Some(upstream_key_id),
+                credits,
+                true,
+                Some(&payload),
+                None,
+            )
+            .await;
             record_proxy_usage(state, proxy_key_id, credits).await;
             tool_success(id, &payload)
         }
@@ -245,13 +284,20 @@ async fn call_sync_tool(
             upstream_key_id,
         } => {
             let msg = format!("上游错误 {status}: {}", upstream_error_message(&payload));
-            log.finish(state, Some(upstream_key_id), 0, false, Some(msg.clone()))
-                .await;
+            log.finish(
+                state,
+                Some(upstream_key_id),
+                0,
+                false,
+                Some(&payload),
+                Some(msg.clone()),
+            )
+            .await;
             tool_error(id, msg)
         }
         balancer::Outcome::AllUnavailable => {
             let msg = "所有上游密钥暂不可用（限流/耗尽/已禁用），请稍后重试或检查密钥池";
-            log.finish(state, None, 0, false, Some(msg.to_owned()))
+            log.finish(state, None, 0, false, None, Some(msg.to_owned()))
                 .await;
             tool_error(id, msg)
         }
@@ -262,6 +308,8 @@ async fn call_sync_tool(
 struct ToolLog {
     proxy_key_id: i64,
     tool: String,
+    /// 完整入参 JSON 文本（明细弹窗展示用）。
+    params_json: String,
     params_summary: String,
     started: Instant,
 }
@@ -271,17 +319,20 @@ impl ToolLog {
         Self {
             proxy_key_id,
             tool: tool.to_owned(),
+            params_json: arguments.to_string(),
             params_summary: request_logs::summarize_params(arguments),
             started: Instant::now(),
         }
     }
 
+    /// success 时带响应体落账（response_json）；失败时 response 为 None。
     async fn finish(
         self,
         state: &AppState,
         upstream_key_id: Option<i64>,
         credits: i64,
         success: bool,
+        response: Option<&Value>,
         error: Option<String>,
     ) {
         request_logs::record(
@@ -290,6 +341,8 @@ impl ToolLog {
                 proxy_key_id: self.proxy_key_id,
                 tool: self.tool,
                 params_summary: self.params_summary,
+                params_json: self.params_json,
+                response_json: response.map(Value::to_string),
                 upstream_key_id,
                 credits,
                 duration_ms: self.started.elapsed().as_millis() as i64,

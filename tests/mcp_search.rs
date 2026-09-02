@@ -114,7 +114,7 @@ async fn search_passthrough_end_to_end() {
         .json()
         .await
         .unwrap();
-    assert_eq!(keys[0]["usage"], 2);
+    assert_eq!(keys[0]["usage"].as_f64().unwrap_or(-1.0), 2.0);
     let keys: serde_json::Value = app
         .client
         .get(format!("{}/api/proxy-keys", app.base_url))
